@@ -117,3 +117,13 @@ Everything is authenticated except register, login, `GET /api/categories`, `GET 
 4. When done, the project must compile (`./mvnw -q compile`) and start against the local PostgreSQL.
 5. Whenever the API contract changes (adding, editing, or removing endpoints; changing methods, paths, parameters, request/response fields, validation, status codes, errors, authentication, roles, or required headers), update `RUN.md` in the same task. Keep it aligned with the implemented behavior and remove obsolete examples. Provide Bruno-friendly, copyable URLs and JSON bodies, explicitly list required headers (or state that none are required), explain token/ID variable setup, and include success and failure paths with expected status codes and responses. Update startup, configuration, and seed instructions when the changes affect how these requests are run.
 6. Finish with a short summary: files added/changed, new endpoints, new configuration keys, assumptions made.
+
+### Testing
+When generating or modifying test code for this project, you **must strictly adhere** to our internal automation standards.
+
+*   **Core Rules:** Tests must be based on JUnit 5 + Mockito, cover all edge cases/exceptions, and follow the Given-When-Then pattern. Controller integration tests must validate both successful and failed HTTP responses.
+*   **Full Specifications & Code Templates:** All technical requirements, method naming conventions, and structural architecture examples are detailed in a separate document.
+
+**Read full rules here: [Project Testing Conventions](.github/docs/TESTING-CONVENTIONS.md)**
+
+*Note: Before generating any test class, you must read the file linked above and structure the code exactly according to the provided templates.*

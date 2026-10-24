@@ -1,7 +1,8 @@
 # Run eGastro and test it with Bruno
 
-Implemented through T03: authentication, categories, products, public browsing,
-and admin catalog CRUD. Cart, recommendations, and orders belong to later tasks.
+Implemented through T04: authentication, categories, products, public browsing,
+admin catalog CRUD, and server-side shopping carts. Recommendations and orders
+belong to later tasks. Run section 11's cart checks before section 8's cleanup.
 
 ## 1. Start PostgreSQL and the backend
 
@@ -109,6 +110,8 @@ When entering the header manually, include the prefix exactly as shown below.
 | GET `/api/auth/me` | `Authorization: Bearer {{userToken}}` (or admin token) |
 | Admin POST or PUT with a JSON body | `Authorization: Bearer {{adminToken}}` and `Content-Type: application/json` |
 | Admin DELETE | `Authorization: Bearer {{adminToken}}` |
+| Cart GET or DELETE | `Authorization: Bearer {{userToken}}` (or admin token) |
+| Cart POST or PUT | `Authorization: Bearer {{userToken}}` and `Content-Type: application/json` |
 
 For example, an admin product POST/PUT uses:
 
@@ -764,7 +767,7 @@ GET, Auth: None. Headers: none required:
 {{baseUrl}}/v3/api-docs
 ```
 
-Expected: **200**, OpenAPI JSON containing authentication and catalog endpoints.
+Expected: **200**, OpenAPI JSON containing authentication, catalog, and cart endpoints.
 Swagger's Authorize dialog takes the token without the `Bearer ` prefix.
 
 Public GET follow-up checks in the cleanup section also require no headers.
@@ -833,3 +836,232 @@ Repeat the catalog flow after cleanup, or choose a new category name.
 | Admin login fails after env change | Bootstrap does not reset existing credentials. |
 | Category POST returns 409 on rerun | Finish cleanup or choose a new name. |
 | Literal search gives unexpected results | Avoid double encoding: URL uses `%25`/`%5C`; query editor uses raw characters. |
+
+## 11. Shopping cart (T04) — run before catalog cleanup
+
+Use the customer login from section 3: copy `accessToken` into `userToken`.
+Use the temporary product created in section 6 for `productId`, and an unused
+numeric ID for `missingId`. All four cart endpoints require authentication;
+admins also have their own carts. No user ID is accepted from the client.
+There are no new configuration keys or seed steps. Hibernate creates `carts`
+and `cart_items` when you start with the documented `ddl-auto=update` command.
+
+GET and DELETE require only this header and no body:
+
+```http
+Authorization: Bearer {{userToken}}
+```
+
+POST and PUT require both headers:
+
+```http
+Authorization: Bearer {{userToken}}
+Content-Type: application/json
+```
+
+### Get the cart — GET
+
+```text
+{{baseUrl}}/api/cart
+```
+
+Expected **200**. The first GET creates an empty cart row for this user:
+
+```json
+{"items":[],"totalQuantity":0,"totalAmount":0.00}
+```
+
+Subsequent GETs preserve the contents. Items are ordered by cart item ID
+ascending. Prices and availability reflect the current product; totals are
+calculated on every response. A missing product image omits `imageUrl` under
+the application's existing null-field serialization setting.
+
+### Add a product — POST
+
+```text
+{{baseUrl}}/api/cart/items
+```
+
+```json
+{"productId":{{productId}},"quantity":2}
+```
+
+Expected **200** with the updated cart. For a product priced at 2.49, an
+illustrative response is:
+
+```json
+{
+  "items": [
+    {
+      "productId": 49,
+      "name": "Example product",
+      "imageUrl": "https://placehold.co/400x300",
+      "unitPrice": 2.49,
+      "unitOfMeasure": "L",
+      "quantity": 2,
+      "lineTotal": 4.98,
+      "available": true
+    }
+  ],
+  "totalQuantity": 2,
+  "totalAmount": 4.98
+}
+```
+
+Names, IDs, prices and units depend on your product. Repeat the POST: the
+existing quantity becomes 4, rather than creating another item. Add a second
+available product using its ID from `GET {{baseUrl}}/api/products?size=100`
+to check ordering and sums. Each user has a separate cart: GET with
+`adminToken` does not show the customer's items.
+
+### Set quantity — PUT
+
+```text
+{{baseUrl}}/api/cart/items/{{productId}}
+```
+
+```json
+{"quantity":99}
+```
+
+Expected **200** with quantity 99 for this item and recalculated totals.
+POST the same product with quantity 1 now returns **400** and leaves the
+quantity at 99:
+
+```json
+{
+  "timestamp": "2026-10-24T12:00:00Z",
+  "status": 400,
+  "message": "Validation failed",
+  "path": "/api/cart/items",
+  "fieldErrors": [
+    {"field":"quantity","message":"Maximum quantity per product is 99"}
+  ]
+}
+```
+
+PUT with `{"quantity":3}` resets the quantity to 3. If an admin changes the
+product's price, the next cart response uses that price. If the admin marks
+the product unavailable, it stays visible with `available:false` and still
+contributes to totals. PUT may change its quantity; POST rejects adding more
+with **409**, `Product is currently unavailable`.
+
+### Remove an item — DELETE
+
+```text
+{{baseUrl}}/api/cart/items/{{productId}}
+```
+
+Expected **200** with the updated cart. Repeat: **200**, unchanged cart.
+Deleting `{{missingId}}` also succeeds. If this was the only item, the
+response is `{"items":[],"totalQuantity":0,"totalAmount":0.00}`.
+
+### Validation and lookup failures
+
+Use the headers above. Every rejected request leaves quantities unchanged.
+For POST checks unrelated to product availability, use a known available
+`productId`. For PUT checks, use an item already added to the cart.
+
+| Method and copyable URL | JSON body | Expected |
+| --- | --- | --- |
+| POST `{{baseUrl}}/api/cart/items` | `{"quantity":1}` | 400, `productId`: `Product is required` |
+| POST `{{baseUrl}}/api/cart/items` | `{"productId":{{productId}}}` | 400, `quantity`: `Quantity is required` |
+| POST `{{baseUrl}}/api/cart/items` | `{"productId":{{productId}},"quantity":0}` | 400, `quantity`: `Quantity must be at least 1` |
+| POST `{{baseUrl}}/api/cart/items` | `{"productId":{{productId}},"quantity":100}` | 400, `quantity`: `Maximum quantity per product is 99` |
+| POST `{{baseUrl}}/api/cart/items` | `{"productId":{{missingId}},"quantity":1}` | 404, `Product not found` |
+| PUT `{{baseUrl}}/api/cart/items/{{productId}}` | `{}` or `{"quantity":null}` | 400, `quantity`: `Quantity is required` |
+| PUT `{{baseUrl}}/api/cart/items/{{productId}}` | `{"quantity":0}` | 400, `quantity`: `Quantity must be at least 1` |
+| PUT `{{baseUrl}}/api/cart/items/{{productId}}` | `{"quantity":100}` | 400, `quantity`: `Maximum quantity per product is 99` |
+| PUT `{{baseUrl}}/api/cart/items/{{missingId}}` | `{"quantity":1}` | 404, `Item not found in cart` |
+| PUT `{{baseUrl}}/api/cart/items/not-a-number` | `{"quantity":1}` | 400, `productId`: `Invalid parameter value` |
+| POST `{{baseUrl}}/api/cart/items` | Raw malformed JSON `{"quantity":` | 400, `Malformed request body` |
+
+Negative quantities have the same minimum error as zero. Explicit nulls have
+the same required errors as omitted fields. To check unavailable-product POST,
+copy an ID with `available:false` from the catalog into `unavailableProductId`:
+
+```text
+{{baseUrl}}/api/cart/items
+```
+
+```json
+{"productId":{{unavailableProductId}},"quantity":1}
+```
+
+Expected **409**:
+
+```json
+{"timestamp":"2026-10-24T12:00:00Z","status":409,"message":"Product is currently unavailable","path":"/api/cart/items"}
+```
+
+404 responses use this shape with `status:404` and the table's message/path,
+without `fieldErrors`. Validation responses use the 400 shape above with the
+table's field/message and the request path.
+
+For each of GET `/api/cart`, POST `/api/cart/items`, and PUT/DELETE
+`/api/cart/items/{{productId}}`, select Auth: None and remove Authorization:
+expect **401**. Repeat with `Authorization: Bearer not-a-jwt`: also **401**.
+Keep Content-Type and a valid JSON body on POST/PUT. Example for GET:
+
+```json
+{"timestamp":"2026-10-24T12:00:00Z","status":401,"message":"Authentication required","path":"/api/cart"}
+```
+
+### Product deletion removes references in every cart
+
+Restore the temporary product to `available:true` using the admin PUT from
+section 6, then POST it into both the customer's and admin's carts (use each
+token in turn). Run the product DELETE in section 8 with `adminToken`:
+expect **204**, even while the product is in carts. GET `/api/cart` with each
+token returns **200** without that product; other items remain. This cleanup
+runs in the same transaction as product deletion. Continue section 8's category
+cleanup afterward. There is no public clear-cart endpoint; remove other items
+individually if desired.
+
+## 12. Automated tests
+
+Use JDK 21 and run from the repository root:
+
+```powershell
+./mvnw.cmd -q test
+```
+
+On macOS/Linux use `./mvnw -q test`. No running backend, PostgreSQL, Docker,
+environment overrides, or seed data are needed. Fixtures exist only in memory.
+The tests use JUnit 5, Mockito and JUnit assertions, with Given/When/Then
+sections and `should…_When_…` method names.
+
+Service/component tests run without Spring. Controller integration tests use
+`@WebMvcTest`, MockMvc, and `@MockitoBean` services; they load the real security
+configuration, JWT filter, security error handlers, request validation, and
+exception advice. Token parsing is mocked in the controller slices, with real
+JWT generation/parsing tested separately. These slices verify the HTTP contract
+and authorization; they do not exercise database queries or transaction rollback.
+
+Integration test classes use the `IT` suffix (for example, `ProductControllerIT`).
+Public and admin product/category controllers each have a separate test slice.
+Surefire includes the unit-test patterns, `IT*`, and `*IT`, so `test` runs
+the entire suite. Shared entities, DTO factories, security fixtures, JSON bodies,
+and parameterized inputs live in `src/test/java/com/egastro/testData/`.
+Factories return fresh objects for each call; assertion and MockMvc helpers stay
+in `support`.
+
+Coverage includes authentication, admin bootstrap, catalog CRUD/filtering,
+cart lifecycle and quantity rules, DTO validation, current-price totals,
+pagination/sorting, JWT rejection cases, secret redaction, CORS, and error JSON.
+Product-delete event ordering and cart cleanup are verified as unit interactions;
+section 11 covers the PostgreSQL deletion flow manually.
+
+Surefire results are written to `target/surefire-reports/`. The test phase also
+generates a JaCoCo coverage report: open `target/site/jacoco/index.html`.
+To run a single class:
+
+```powershell
+./mvnw.cmd '-Dtest=CartServiceTest' test
+```
+
+To run only the controller integration tests:
+
+```powershell
+./mvnw.cmd '-Dtest=*IT' test
+```
