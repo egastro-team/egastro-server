@@ -6,6 +6,7 @@ import com.egastro.dto.response.OrderSummaryResponse;
 import com.egastro.dto.response.PageResponse;
 import com.egastro.entity.Order;
 import com.egastro.entity.OrderItem;
+import com.egastro.entity.Product;
 import com.egastro.enums.OrderStatus;
 import com.egastro.exception.ApiException;
 import com.egastro.mapper.OrderMapper;
@@ -40,7 +41,7 @@ public class OrderService {
             throw ApiException.conflict("Cart is empty");
         }
         String unavailable = cartItems.stream().map(CartService.CartProduct::product)
-                .filter(product -> !product.isAvailable()).map(product -> product.getName())
+                .filter(product -> !product.isAvailable()).map(Product::getName)
                 .collect(Collectors.joining(", "));
         if (!unavailable.isEmpty()) {
             throw ApiException.conflict("Some products are unavailable: " + unavailable);

@@ -1,6 +1,5 @@
 package com.egastro.service;
 
-import com.egastro.dto.request.CategoryRequest;
 import com.egastro.entity.Category;
 import com.egastro.exception.ApiException;
 import com.egastro.mapper.CategoryMapper;

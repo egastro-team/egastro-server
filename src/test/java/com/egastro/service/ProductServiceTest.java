@@ -1,6 +1,5 @@
 package com.egastro.service;
 
-import com.egastro.entity.Product;
 import com.egastro.enums.ProductSort;
 import com.egastro.enums.UnitOfMeasure;
 import com.egastro.event.ProductDeletedEvent;
@@ -18,7 +17,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Pageable;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 
 import static com.egastro.testData.TestFixtures.*;

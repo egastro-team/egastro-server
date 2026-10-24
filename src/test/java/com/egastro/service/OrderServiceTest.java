@@ -1,6 +1,8 @@
 package com.egastro.service;
 
 import com.egastro.dto.request.CreateOrderRequest;
+import com.egastro.dto.response.OrderItemResponse;
+import com.egastro.dto.response.OrderSummaryResponse;
 import com.egastro.entity.Order;
 import com.egastro.enums.OrderStatus;
 import com.egastro.exception.ApiException;
@@ -67,8 +69,8 @@ class OrderServiceTest {
         assertAll(() -> assertEquals(6L, response.id()),
                 () -> assertEquals(OrderStatus.NEW, response.status()),
                 () -> assertEquals(new BigDecimal("5.28"), response.totalAmount()),
-                () -> assertEquals(List.of(3L, 9L), response.items().stream().map(i -> i.productId()).toList()),
-                () -> assertEquals(List.of(3, 2), response.items().stream().map(i -> i.quantity()).toList()),
+                () -> assertEquals(List.of(3L, 9L), response.items().stream().map(OrderItemResponse::productId).toList()),
+                () -> assertEquals(List.of(3, 2), response.items().stream().map(OrderItemResponse::quantity).toList()),
                 () -> assertEquals("Milk", response.items().getFirst().productName()),
                 () -> assertEquals(new BigDecimal("0.10"), response.items().getFirst().unitPrice()),
                 () -> assertEquals(new BigDecimal("0.30"), response.items().getFirst().lineTotal()),
@@ -207,8 +209,8 @@ class OrderServiceTest {
         var response = service.list(1L, 1, 2);
 
         // THEN
-        assertEquals(List.of(2, 0), response.content().stream().map(i -> i.itemsCount()).toList());
-        assertEquals(List.of(6L, 8L), response.content().stream().map(i -> i.id()).toList());
+        assertEquals(List.of(2, 0), response.content().stream().map(OrderSummaryResponse::itemsCount).toList());
+        assertEquals(List.of(6L, 8L), response.content().stream().map(OrderSummaryResponse::id).toList());
         assertEquals(1, response.page());
         assertEquals(2, response.size());
         assertEquals(5, response.totalElements());

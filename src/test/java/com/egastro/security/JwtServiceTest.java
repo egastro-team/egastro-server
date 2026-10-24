@@ -1,6 +1,5 @@
 package com.egastro.security;
 
-import com.egastro.enums.Role;
 import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

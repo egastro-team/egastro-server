@@ -1,7 +1,6 @@
 package com.egastro.service;
 
 import com.egastro.config.properties.JwtProperties;
-import com.egastro.dto.request.RegisterRequest;
 import com.egastro.entity.User;
 import com.egastro.enums.Role;
 import com.egastro.exception.ApiException;

@@ -1,5 +1,6 @@
 package com.egastro.service;
 
+import com.egastro.dto.response.AdminOrderSummaryResponse;
 import com.egastro.enums.OrderStatus;
 import com.egastro.exception.ApiException;
 import com.egastro.mapper.OrderMapper;
@@ -115,7 +116,7 @@ class AdminOrderServiceTest {
         var response = service.list(status, 1, 2);
 
         // THEN
-        assertEquals(List.of(2, 0), response.content().stream().map(i -> i.itemsCount()).toList());
+        assertEquals(List.of(2, 0), response.content().stream().map(AdminOrderSummaryResponse::itemsCount).toList());
         assertEquals("user@example.com", response.content().getFirst().userEmail());
         assertEquals(1L, response.content().getFirst().userId());
         assertEquals(1, response.page());

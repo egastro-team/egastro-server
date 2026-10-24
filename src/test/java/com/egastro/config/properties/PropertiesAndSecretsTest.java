@@ -1,8 +1,5 @@
 package com.egastro.config.properties;
 
-import com.egastro.dto.request.LoginRequest;
-import com.egastro.dto.request.RegisterRequest;
-import com.egastro.dto.response.LoginResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;

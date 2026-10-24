@@ -1,5 +1,6 @@
 package com.egastro.mapper;
 
+import com.egastro.dto.response.CartItemResponse;
 import com.egastro.enums.UnitOfMeasure;
 import org.junit.jupiter.api.Test;
 
@@ -37,7 +38,7 @@ class CartMapperTest {
         // THEN
         assertAll(() -> assertEquals(5, response.totalQuantity()),
                 () -> assertEquals(new BigDecimal("5.28"), response.totalAmount()),
-                () -> assertEquals(List.of(3L, 9L), response.items().stream().map(i -> i.productId()).toList()),
+                () -> assertEquals(List.of(3L, 9L), response.items().stream().map(CartItemResponse::productId).toList()),
                 () -> assertEquals(new BigDecimal("0.30"), response.items().getFirst().lineTotal()),
                 () -> assertEquals(new BigDecimal("0.10"), response.items().getFirst().unitPrice()),
                 () -> assertEquals("Milk", response.items().getFirst().name()),

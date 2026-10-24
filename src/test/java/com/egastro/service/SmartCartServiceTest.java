@@ -1,5 +1,6 @@
 package com.egastro.service;
 
+import com.egastro.dto.response.RecommendedProductResponse;
 import com.egastro.mapper.ProductMapper;
 import com.egastro.repository.ProductRepository;
 import com.egastro.service.recommendation.*;
@@ -68,7 +69,7 @@ class SmartCartServiceTest {
         var result = service.recommend(1L, 2);
         // THEN
         assertEquals("MODEL", result.source());
-        assertEquals(List.of(7.0, 5.0), result.items().stream().map(item -> item.score()).toList());
+        assertEquals(List.of(7.0, 5.0), result.items().stream().map(RecommendedProductResponse::score).toList());
         assertEquals(candidates.get(3).metrics(), result.items().getFirst().metrics());
         verify(products, times(1)).findAllByIdIn(any());
         verify(mapper).toResponse(six);

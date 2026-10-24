@@ -2,6 +2,7 @@ package com.egastro.service;
 
 import com.egastro.config.properties.RecommendationProperties;
 import com.egastro.dto.response.*;
+import com.egastro.entity.Product;
 import com.egastro.mapper.ProductMapper;
 import com.egastro.repository.ProductRepository;
 import com.egastro.service.recommendation.*;
@@ -62,7 +63,7 @@ public class SmartCartService {
             return List.of();
         }
         var products = productRepository.findAllByIdIn(candidates.stream().map(ScoredRecommendation::productId).toList())
-                .stream().collect(Collectors.toMap(product -> product.getId(), Function.identity()));
+                .stream().collect(Collectors.toMap(Product::getId, Function.identity()));
         Set<Long> excluded = new HashSet<>(cartIds);
         var items = new ArrayList<RecommendedProductResponse>();
         for (var candidate : candidates) {

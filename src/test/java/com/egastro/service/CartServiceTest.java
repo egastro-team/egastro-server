@@ -1,10 +1,7 @@
 package com.egastro.service;
 
-import com.egastro.dto.request.AddCartItemRequest;
-import com.egastro.dto.request.UpdateCartItemRequest;
 import com.egastro.entity.Cart;
 import com.egastro.entity.CartItem;
-import com.egastro.event.ProductDeletedEvent;
 import com.egastro.exception.ApiException;
 import com.egastro.mapper.CartMapper;
 import com.egastro.repository.*;
