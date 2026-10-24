@@ -1,0 +1,23 @@
+meta {
+  name: Cart recommendations
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/api/cart/recommendations?limit=5
+  body: none
+  auth: bearer
+}
+
+params:query {
+  limit: 5
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+docs {
+  RUN.md section 14. Expected 200. Related products for your cart. Empty cart: source MODEL and empty items. Model failure or no usable result: source FALLBACK. Limit defaults to 5 and clamps to 1–20; noninteger limit returns 400.
+}

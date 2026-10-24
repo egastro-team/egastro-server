@@ -1,0 +1,44 @@
+meta {
+  name: Login
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/auth/login
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "email": "{{loginEmail}}",
+    "password": "{{loginPassword}}"
+  }
+}
+
+script:pre-request {
+  const role = bru.getEnvVar('loginAs');
+  if (role !== 'USER' && role !== 'ADMIN') {
+    throw new Error('Set loginAs to USER or ADMIN in the Local environment');
+  }
+  bru.setVar('loginEmail', bru.getEnvVar(role === 'ADMIN' ? 'adminEmail' : 'userEmail'));
+  bru.setVar('loginPassword', bru.getEnvVar(role === 'ADMIN' ? 'adminPassword' : 'userPassword'));
+}
+
+script:post-response {
+  if (res.getStatus() === 200) {
+    const body = res.getBody();
+    if (body.accessToken && body.user) {
+      bru.setVar(body.user.role === 'ADMIN' ? 'adminToken' : 'userToken', body.accessToken);
+    }
+  }
+}
+
+docs {
+  RUN.md section 3. Expected 200. Set loginAs to USER, then ADMIN and run this same request for each role. Captures userToken/adminToken in runtime memory without logging or writing tokens to disk. Wrong credentials return 401.
+}

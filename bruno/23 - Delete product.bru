@@ -1,0 +1,19 @@
+meta {
+  name: Delete product
+  type: http
+  seq: 23
+}
+
+delete {
+  url: {{baseUrl}}/api/admin/products/{{productId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+docs {
+  RUN.md section 8. Expected 204, no response body. Run after cart/order/recommendation checks. Removes cart references; order snapshots remain. Repeating returns 404.
+}

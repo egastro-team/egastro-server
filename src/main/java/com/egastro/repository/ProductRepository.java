@@ -9,8 +9,16 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
+import java.util.Collection;
+import java.util.List;
 
 public interface ProductRepository extends JpaRepository<Product, Long> {
+    @EntityGraph(attributePaths = "category")
+    List<Product> findAllByIdIn(Collection<Long> ids);
+
+    @Query("select p.id from Product p where p.available = true and p.id not in :excluded order by p.id desc")
+    List<Long> findAvailableIdsExcluding(@Param("excluded") Collection<Long> excluded, Pageable pageable);
+
     boolean existsByCategoryId(Long categoryId);
 
     @Override

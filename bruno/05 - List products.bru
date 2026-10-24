@@ -1,0 +1,23 @@
+meta {
+  name: List products
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/products?page=0&size=20&sort=name_asc
+  body: none
+  auth: none
+}
+
+params:query {
+  page: 0
+  size: 20
+  sort: name_asc
+  ~category: {{categoryId}}
+  ~q: milk
+}
+
+docs {
+  RUN.md sections 4, 5, 6 and 7. Expected 200. Enable category/q in Params to filter; modify this request for all sort/search/pagination checks. Sort: name_asc, name_desc, price_asc, price_desc. Page is zero-based; size clamps to 1–100. Invalid sort/parameter returns 400; unknown category returns 404.
+}

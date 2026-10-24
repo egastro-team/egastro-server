@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "eGastro Backend",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

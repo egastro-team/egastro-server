@@ -17,6 +17,13 @@ spring:
     default-property-inclusion: non_null
 
 egastro:
+  recommendations:
+    ml:
+      base-url: ${ML_SERVICE_URL:http://localhost:8000}
+      connect-timeout: PT0.5S
+      read-timeout: PT2S
+    default-limit: 5
+    max-limit: 20
   security:
     jwt:
       secret: ${JWT_SECRET:local-development-placeholder-secret-change-me-at-least-32-bytes}

@@ -1,0 +1,19 @@
+meta {
+  name: Admin order details
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/api/admin/orders/{{orderId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+docs {
+  RUN.md section 13. Expected 200, including userId/userEmail. Missing order returns 404; customer token returns 403.
+}

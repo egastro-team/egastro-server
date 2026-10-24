@@ -1,0 +1,30 @@
+meta {
+  name: Add cart item
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/api/cart/items
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "productId": {{productId}},
+    "quantity": 2
+  }
+}
+
+docs {
+  RUN.md section 11. Expected 200. Requires an available productId. Repeating adds quantity. Quantity must be 1–99, including the resulting total. Missing product returns 404; unavailable product returns 409.
+}

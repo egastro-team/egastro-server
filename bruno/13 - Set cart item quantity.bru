@@ -1,0 +1,29 @@
+meta {
+  name: Set cart item quantity
+  type: http
+  seq: 13
+}
+
+put {
+  url: {{baseUrl}}/api/cart/items/{{productId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "quantity": 99
+  }
+}
+
+docs {
+  RUN.md section 11. Expected 200. Requires an existing item. Quantity must be 1–99; use 3 for a smaller cart. Missing item returns 404.
+}

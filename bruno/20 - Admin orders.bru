@@ -1,0 +1,25 @@
+meta {
+  name: Admin orders
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/api/admin/orders?page=0&size=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 0
+  size: 20
+  ~status: NEW
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+docs {
+  RUN.md section 13. Expected 200. Enable status in Params to filter by NEW, CONFIRMED, COMPLETED or CANCELLED. Invalid status returns 400. Customer token returns 403.
+}

@@ -1,0 +1,24 @@
+meta {
+  name: Customer orders
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/api/orders?page=0&size=20
+  body: none
+  auth: bearer
+}
+
+params:query {
+  page: 0
+  size: 20
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+docs {
+  RUN.md section 13. Expected 200. Current user only; newest first. Invalid pagination types return 400.
+}

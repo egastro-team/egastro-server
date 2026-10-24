@@ -1,0 +1,29 @@
+meta {
+  name: Rename category
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{baseUrl}}/api/admin/categories/{{categoryId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Bruno Renamed Category"
+  }
+}
+
+docs {
+  RUN.md section 5. Expected 200. Requires categoryId. Blank name returns 400; duplicate name returns 409.
+}

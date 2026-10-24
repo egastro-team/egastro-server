@@ -1,0 +1,19 @@
+meta {
+  name: Customer order details
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/api/orders/{{orderId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+docs {
+  RUN.md section 13. Expected 200. Requires orderId from checkout. Missing order or another customer's order returns 404.
+}

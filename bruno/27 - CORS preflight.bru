@@ -1,0 +1,21 @@
+meta {
+  name: CORS preflight
+  type: http
+  seq: 27
+}
+
+options {
+  url: {{baseUrl}}/api/auth/me
+  body: none
+  auth: none
+}
+
+headers {
+  Origin: http://localhost:5173
+  Access-Control-Request-Method: GET
+  Access-Control-Request-Headers: Authorization,Content-Type
+}
+
+docs {
+  RUN.md section 9. Expected 200 with Access-Control-Allow-Origin and allowed methods/headers. No authentication or body. Unlisted origin returns 403 outside the API JSON error format.
+}

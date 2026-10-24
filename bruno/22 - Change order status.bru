@@ -1,0 +1,29 @@
+meta {
+  name: Change order status
+  type: http
+  seq: 22
+}
+
+patch {
+  url: {{baseUrl}}/api/admin/orders/{{orderId}}/status
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "status": "CONFIRMED"
+  }
+}
+
+docs {
+  RUN.md section 13. Expected 200 for a NEW order. Repeating the same status returns 409. COMPLETED/CANCELLED are final. Missing status returns 400; customer token returns 403.
+}

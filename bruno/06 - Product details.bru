@@ -1,0 +1,15 @@
+meta {
+  name: Product details
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/products/{{productId}}
+  body: none
+  auth: none
+}
+
+docs {
+  RUN.md section 6. Expected 200. Set productId from product creation or the catalog. Unknown ID returns 404.
+}

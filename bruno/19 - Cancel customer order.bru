@@ -1,0 +1,19 @@
+meta {
+  name: Cancel customer order
+  type: http
+  seq: 19
+}
+
+post {
+  url: {{baseUrl}}/api/orders/{{orderId}}/cancel
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+docs {
+  RUN.md section 13. Expected 200 for a NEW order. No body. Other statuses return 409. To test admin status changes afterward, create a fresh order using the same checkout request.
+}

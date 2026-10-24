@@ -1,0 +1,35 @@
+meta {
+  name: Create category
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/admin/categories
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "  Bruno Test Category  "
+  }
+}
+
+script:post-response {
+  if (res.getStatus() >= 200 && res.getStatus() < 300) {
+    bru.setVar('categoryId', res.getBody().id);
+  }
+}
+
+docs {
+  RUN.md section 5. Expected 201 and Location header. Captures categoryId. Duplicate name returns 409.
+}

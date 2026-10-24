@@ -1,0 +1,19 @@
+meta {
+  name: Delete category
+  type: http
+  seq: 24
+}
+
+delete {
+  url: {{baseUrl}}/api/admin/categories/{{categoryId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+docs {
+  RUN.md section 8. Expected 204, no response body. Delete its products first; otherwise 409. Repeating returns 404.
+}

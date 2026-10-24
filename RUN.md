@@ -1,9 +1,9 @@
 # Run eGastro and test it with Bruno
 
-Implemented through T05: authentication, categories, products, public browsing,
+Implemented through T06: authentication, categories, products, public browsing,
 admin catalog CRUD, server-side shopping carts, checkout, customer order history,
-and admin order management. Recommendations belong to a later task. Run sections
-11 and 13 before section 8's catalog cleanup.
+admin order management, and related products for your cart. Run sections
+11, 13, and 14 before section 8's catalog cleanup.
 
 ## 1. Start PostgreSQL and the backend
 
@@ -68,12 +68,18 @@ No volume deletion is needed.
 | Admin email | `admin@egastro.local` | `ADMIN_EMAIL` |
 | Admin password | `Admin12345` | `ADMIN_PASSWORD` |
 | JWT secret | Local development placeholder | `JWT_SECRET` |
+| Recommendation service URL | `http://localhost:8000` | `ML_SERVICE_URL` |
 
 Set overrides before starting Maven. Admin bootstrap only creates a missing
 account; changing `ADMIN_PASSWORD` does not reset an existing password.
 JWTs last 24 hours by default. Changing the signing secret invalidates old tokens.
 
 ## 2. Bruno setup
+
+The ready-to-open collection is in [`bruno/`](bruno/README.md). In Bruno, choose
+**Open Collection**, select that directory, and select the **Local** environment.
+It has one request per method/path; use the same requests for the variations below.
+The collection README explains login switching and automatic token/ID capture.
 
 Create a collection and select a local environment with these variables:
 
@@ -1282,3 +1288,148 @@ Content-Type for checkout/status so these checks isolate authentication.
 For all three admin endpoints, use `userToken`: **403**, `Access denied`.
 The existing security rules also let admins use the customer endpoints for
 their own carts/orders. Customers cannot supply a different user ID.
+
+## 14. Related products for your cart (T06)
+
+Use the `baseUrl` and `userToken` Bruno variables from section 2. Log in and
+copy `accessToken` into `userToken`. Both USER and ADMIN may use this endpoint;
+an admin can substitute `adminToken`. No product IDs are required in the URL.
+To populate the cart, copy an available product's `id` from `GET {{baseUrl}}/api/products`
+into `productId`, then use section 11's `POST /api/cart/items` before requesting
+recommendations. The current cart contents determine the related products.
+
+Request (GET, no body):
+
+```text
+{{baseUrl}}/api/cart/recommendations?limit=5
+```
+
+Required header:
+
+```text
+Authorization: Bearer {{userToken}}
+```
+
+No other headers are required. Omitting `limit` uses 5. Integer values are clamped
+to 1–20 (the configured maximum); `limit=0` uses 1 and `limit=999` uses 20.
+An empty or nonexistent cart returns 200 without creating a cart or contacting
+any recommendation provider:
+
+```json
+{ "source": "MODEL", "items": [] }
+```
+
+With cart items and a working model service, expect 200, for example:
+
+```json
+{
+  "source": "MODEL",
+  "items": [
+    {
+      "product": {
+        "id": 101,
+        "name": "Milk",
+        "description": "Fresh milk",
+        "price": 2.49,
+        "unitOfMeasure": "L",
+        "imageUrl": "https://example.com/milk.png",
+        "available": true,
+        "categoryId": 2,
+        "categoryName": "Dairy"
+      },
+      "score": 3.42,
+      "metrics": { "support": 0.012, "confidence": 0.41, "lift": 3.42 }
+    }
+  ]
+}
+```
+
+IDs and values above are illustrative: the model must return actual available
+catalog IDs outside your cart to produce items. Missing metrics/metric fields
+are omitted. Results retain score order; unavailable, deleted, unknown, duplicate,
+and in-cart products are filtered. A usable model result is never topped up.
+
+When the model is stopped, disabled, times out, returns an error or invalid body,
+or provides no usable products, expect **200** with `source: "FALLBACK"`.
+Fallback ranks available products by total quantity in orders other than CANCELLED,
+then fills with other available products by newest ID. It excludes cart products.
+Fallback item shape (the `product` object has the same fields as above):
+
+```json
+{
+  "source": "FALLBACK",
+  "items": [
+    {
+      "product": {
+        "id": 101,
+        "name": "Milk",
+        "description": "Fresh milk",
+        "price": 2.49,
+        "unitOfMeasure": "L",
+        "imageUrl": "https://example.com/milk.png",
+        "available": true,
+        "categoryId": 2,
+        "categoryName": "Dairy"
+      }
+    }
+  ]
+}
+```
+
+Fallback score and metrics are null internally and omitted from JSON. If no
+products qualify, or fallback fails, expect `{ "source": "FALLBACK", "items": [] }`.
+Model failures do not become HTTP errors.
+
+Failure checks:
+
+- GET `{{baseUrl}}/api/cart/recommendations` with no Authorization header, an
+  invalid token, or an expired token → **401**:
+  `{ "timestamp": "<UTC instant>", "status": 401, "message": "Authentication required", "path": "/api/cart/recommendations" }`.
+- GET `{{baseUrl}}/api/cart/recommendations?limit=abc` with the valid Authorization
+  header → **400**:
+  `{ "timestamp": "<UTC instant>", "status": 400, "message": "Validation failed", "path": "/api/cart/recommendations", "fieldErrors": [{ "field": "limit", "message": "Invalid parameter value" }] }`.
+  Integers outside Java's 32-bit range also produce 400.
+
+### Recommendation configuration and external contract
+
+All keys are under `egastro.recommendations` in `application.yml`:
+
+| Key | Default |
+| --- | --- |
+| `ml.base-url` | `${ML_SERVICE_URL:http://localhost:8000}` |
+| `ml.connect-timeout` | `PT0.5S` |
+| `ml.read-timeout` | `PT2S` |
+| `default-limit` | `5` |
+| `max-limit` | `20` |
+
+Durations must be positive; limits must satisfy `1 <= default-limit <= max-limit`.
+No model process or stub is required to start this backend. To explicitly disable
+the model, set `egastro.recommendations.ml.base-url` to an empty string in YAML
+and restart. A blank base URL skips HTTP and uses fallback for nonempty carts.
+For another service, set `$env:ML_SERVICE_URL = 'http://localhost:8000'` before
+starting Maven. No seed changes are required.
+
+For a real model service, the backend sends POST `{base-url}/v1/recommendations`
+with `Content-Type: application/json` and no authorization header:
+
+```json
+{ "cart_item_ids": [12, 45, 78], "max_k": 10 }
+```
+
+The first 50 distinct cart IDs are sent. `max_k` is twice the effective API limit,
+capped at 50. The service's 200 body uses snake_case:
+
+```json
+{ "recommendations": [{ "product_id": 101, "score": 3.42, "metrics": { "support": 0.012, "confidence": 0.41, "lift": 3.42 } }] }
+```
+
+To additionally run the PostgreSQL aggregate-query integration test (transactional,
+fixture changes roll back), start the local database and use:
+
+```powershell
+$env:EGASTRO_POSTGRES_TESTS = 'true'
+./mvnw.cmd -q test
+Remove-Item Env:EGASTRO_POSTGRES_TESTS
+```
+
+The ordinary test command runs unit and web tests without requiring PostgreSQL.

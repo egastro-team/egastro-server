@@ -1,0 +1,40 @@
+meta {
+  name: Create product
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/admin/products
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "  Bruno Sample Milk  ",
+    "description": "  Whole milk for the Bruno catalog check.  ",
+    "categoryId": {{categoryId}},
+    "price": 2.49,
+    "unitOfMeasure": "L",
+    "imageUrl": "https://placehold.co/400x300?text=Bruno%20Sample%20Milk"
+  }
+}
+
+script:post-response {
+  if (res.getStatus() >= 200 && res.getStatus() < 300) {
+    bru.setVar('productId', res.getBody().id);
+  }
+}
+
+docs {
+  RUN.md section 6. Expected 201 and Location header. Requires categoryId; captures productId. available defaults to true. Unknown category returns 404; invalid fields return 400.
+}

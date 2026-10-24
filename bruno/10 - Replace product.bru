@@ -1,0 +1,34 @@
+meta {
+  name: Replace product
+  type: http
+  seq: 10
+}
+
+put {
+  url: {{baseUrl}}/api/admin/products/{{productId}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "name": "Bruno %_\\ Sample",
+    "description": "Updated product for literal search checks.",
+    "categoryId": {{categoryId}},
+    "price": 3.75,
+    "unitOfMeasure": "PACK",
+    "available": false
+  }
+}
+
+docs {
+  RUN.md section 6. Expected 200. Full replacement; omitted image URL is cleared. This example marks the product unavailable. Set available to true and repeat before cart/checkout success checks. Unknown ID returns 404.
+}

@@ -1,0 +1,19 @@
+meta {
+  name: Remove cart item
+  type: http
+  seq: 15
+}
+
+delete {
+  url: {{baseUrl}}/api/cart/items/{{productId}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+docs {
+  RUN.md section 11. Expected 200. Removing an absent item also succeeds. Run after checkout checks, or add the item again before checkout.
+}

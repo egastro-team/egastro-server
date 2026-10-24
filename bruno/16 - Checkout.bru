@@ -1,0 +1,37 @@
+meta {
+  name: Checkout
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{baseUrl}}/api/orders
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "deliveryAddress": "  10 Main Street, Kyiv  ",
+    "contactPhone": "+380 (67) 123-45-67",
+    "comment": "  Call on arrival  "
+  }
+}
+
+script:post-response {
+  if (res.getStatus() >= 200 && res.getStatus() < 300) {
+    bru.setVar('orderId', res.getBody().id);
+  }
+}
+
+docs {
+  RUN.md section 13. Expected 201 and Location header. Requires a nonempty cart of available products. Captures orderId and clears the cart. Empty cart or unavailable products return 409; invalid address/phone/comment returns 400. Add items and repeat to create a fresh NEW order for cancellation/status checks.
+}

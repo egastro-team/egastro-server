@@ -1,0 +1,19 @@
+meta {
+  name: Get cart
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/api/cart
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{userToken}}
+}
+
+docs {
+  RUN.md section 11. Expected 200. Creates an empty cart if necessary. Admins may use adminToken for their own cart.
+}
