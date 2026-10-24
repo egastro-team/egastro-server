@@ -113,8 +113,8 @@ Everything is authenticated except register, login, `GET /api/categories`, `GET 
 
 1. Read this file, then inspect the existing code before writing anything; reuse existing classes (`ApiException`, `PageResponse`, `CurrentUser`, DTOs, …).
 2. Implement only the scope of the current task; do not change earlier tasks except where the task says so.
-3. Implement production code only (no test code).
-4. When done, the project must compile (`./mvnw -q compile`) and start against the local PostgreSQL.
+3. Write tests for all new logic and update relevant tests when changing existing behavior. Follow `.github/docs/TESTING-CONVENTIONS.md`; cover successful behavior, validation boundaries, and error paths, including successful and failed HTTP responses for new endpoints.
+4. When done, the project must compile (`./mvnw -q compile`), all new and existing tests must pass (`./mvnw -q test`), and the application must start against the local PostgreSQL.
 5. Whenever the API contract changes (adding, editing, or removing endpoints; changing methods, paths, parameters, request/response fields, validation, status codes, errors, authentication, roles, or required headers), update `RUN.md` in the same task. Keep it aligned with the implemented behavior and remove obsolete examples. Provide Bruno-friendly, copyable URLs and JSON bodies, explicitly list required headers (or state that none are required), explain token/ID variable setup, and include success and failure paths with expected status codes and responses. Update startup, configuration, and seed instructions when the changes affect how these requests are run.
 6. Finish with a short summary: files added/changed, new endpoints, new configuration keys, assumptions made.
 

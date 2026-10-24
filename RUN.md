@@ -1,8 +1,9 @@
 # Run eGastro and test it with Bruno
 
-Implemented through T04: authentication, categories, products, public browsing,
-admin catalog CRUD, and server-side shopping carts. Recommendations and orders
-belong to later tasks. Run section 11's cart checks before section 8's cleanup.
+Implemented through T05: authentication, categories, products, public browsing,
+admin catalog CRUD, server-side shopping carts, checkout, customer order history,
+and admin order management. Recommendations belong to a later task. Run sections
+11 and 13 before section 8's catalog cleanup.
 
 ## 1. Start PostgreSQL and the backend
 
@@ -767,7 +768,7 @@ GET, Auth: None. Headers: none required:
 {{baseUrl}}/v3/api-docs
 ```
 
-Expected: **200**, OpenAPI JSON containing authentication, catalog, and cart endpoints.
+Expected: **200**, OpenAPI JSON containing authentication, catalog, cart, and order endpoints.
 Swagger's Authorize dialog takes the token without the `Bearer ` prefix.
 
 Public GET follow-up checks in the cleanup section also require no headers.
@@ -780,7 +781,7 @@ Multiple violated rules can produce multiple entries.
 | --- | --- |
 | GET `{{baseUrl}}/api/unknown`, authenticated | 404, `Resource not found` |
 | GET `{{baseUrl}}/api/unknown`, Auth: None | 401, `Authentication required` |
-| GET `{{baseUrl}}/api/admin/orders`, admin | 404; order controller is not implemented |
+| GET `{{baseUrl}}/api/admin/orders`, admin | 200, paged order summaries |
 | GET `{{baseUrl}}/api/admin/orders`, customer | 403, `Access denied` |
 | GET `{{baseUrl}}/api/admin/orders`, Auth: None | 401, `Authentication required` |
 
@@ -1052,6 +1053,14 @@ pagination/sorting, JWT rejection cases, secret redaction, CORS, and error JSON.
 Product-delete event ordering and cart cleanup are verified as unit interactions;
 section 11 covers the PostgreSQL deletion flow manually.
 
+Order coverage includes checkout snapshots/totals, cart clearing and failure
+paths, input normalization and validation bounds, customer ownership and
+cancellation, batched summary counts, pagination, and all admin status
+transitions. Separate customer/admin order controller slices verify response
+bodies, checkout Location, authentication, role checks, validation and business
+errors. These tests use mocked repositories/services; section 13 covers the
+PostgreSQL order lifecycle and product-deletion snapshot check manually.
+
 Surefire results are written to `target/surefire-reports/`. The test phase also
 generates a JaCoCo coverage report: open `target/site/jacoco/index.html`.
 To run a single class:
@@ -1065,3 +1074,211 @@ To run only the controller integration tests:
 ```powershell
 ./mvnw.cmd '-Dtest=*IT' test
 ```
+
+## 13. Orders (T05) — run before catalog cleanup
+
+No new configuration keys or seed scripts are needed. Start with section 1's
+`ddl-auto=update` override; Hibernate adds `orders` and `order_items` without
+recreating the existing catalog. Checkout has no payment step.
+
+Use `baseUrl`, `userToken`, `adminToken`, `productId`, and `missingId` from
+sections 2–6. Choose an available product and add it to the customer's cart
+using section 11. Save a checkout response's `id` as Bruno variable `orderId`.
+For privacy checks, register and log in a second customer and save that login's
+`accessToken` as `otherUserToken`. Each login token belongs in Bruno's Bearer
+Token field without the `Bearer ` prefix.
+
+All customer requests below require:
+
+```http
+Authorization: Bearer {{userToken}}
+```
+
+All admin requests below require:
+
+```http
+Authorization: Bearer {{adminToken}}
+```
+
+Checkout POST and status PATCH additionally require
+`Content-Type: application/json`. GET and cancellation POST have no body and
+need no Content-Type header. These are the only required headers.
+
+### Checkout — POST
+
+```text
+{{baseUrl}}/api/orders
+```
+
+```json
+{
+  "deliveryAddress": "  10 Main Street, Kyiv  ",
+  "contactPhone": "+380 (67) 123-45-67",
+  "comment": "  Call on arrival  "
+}
+```
+
+Expected **201**, `Location: /api/orders/{id}`. For a cart containing two units
+of a product priced at 2.49, an illustrative response is:
+
+```json
+{
+  "id": 1,
+  "status": "NEW",
+  "totalAmount": 4.98,
+  "deliveryAddress": "10 Main Street, Kyiv",
+  "contactPhone": "+380671234567",
+  "comment": "Call on arrival",
+  "createdAt": "2026-10-24T12:00:00Z",
+  "items": [
+    {"productId":49,"productName":"Example product","unitPrice":2.49,"quantity":2,"lineTotal":4.98}
+  ]
+}
+```
+
+IDs, timestamps, names and prices depend on your data. Save `id` as `orderId`.
+Address/comment are trimmed; spaces, dashes and parentheses are removed from
+the phone. A null/omitted comment is allowed and omitted from the response.
+GET `{{baseUrl}}/api/cart` now returns an empty cart. Repeat checkout with the
+same valid body: **409**, `Cart is empty`. Checkout creates the order/items
+and clears the cart in one transaction; a rejected checkout preserves the cart.
+
+To check availability, add an available product, then use the admin product
+PUT from section 6 to set it unavailable. Submit checkout: **409**,
+`Some products are unavailable: Example product` (the actual names are joined
+with comma and space). No order is created. Restore availability before retrying.
+
+### Customer history and details — GET
+
+```text
+{{baseUrl}}/api/orders?page=0&size=20
+```
+
+Expected **200**:
+
+```json
+{
+  "content":[{"id":1,"status":"NEW","totalAmount":4.98,"itemsCount":2,"createdAt":"2026-10-24T12:00:00Z"}],
+  "page":0,"size":20,"totalElements":1,"totalPages":1
+}
+```
+
+Only this user's orders appear, newest first (`createdAt desc, id desc`).
+`itemsCount` is the sum of quantities, not the number of distinct products.
+Page defaults to 0; size defaults to 20. Negative page becomes 0; size is clamped
+to 1–100. Out-of-range pages return empty `content` with the matching totals.
+
+```text
+{{baseUrl}}/api/orders/{{orderId}}
+```
+
+Expected **200** with the checkout response fields and current order status.
+Later product renaming, repricing, unavailability or hard deletion does not
+alter these snapshot fields or remove order history. Check this GET after
+section 8's product deletion: the saved product ID/name/price remain.
+
+### Customer cancellation — POST, no body
+
+```text
+{{baseUrl}}/api/orders/{{orderId}}/cancel
+```
+
+For a NEW order, expected **200** with the full order and `status:"CANCELLED"`.
+No cart items are restored. Repeat: **409**, `Order can no longer be cancelled`.
+CONFIRMED, COMPLETED and CANCELLED orders all reject customer cancellation.
+Create another order by adding products and checking out again for admin checks.
+
+### Admin list and details — GET
+
+```text
+{{baseUrl}}/api/admin/orders?page=0&size=20
+```
+
+```text
+{{baseUrl}}/api/admin/orders?status=NEW&page=0&size=20
+```
+
+Expected **200** with the same pagination envelope and summary fields as customer
+history, plus `userId` and `userEmail` on every content entry. It includes all
+users, sorted newest first. Omit `status` for all orders; valid filter values
+are exactly `NEW`, `CONFIRMED`, `COMPLETED`, `CANCELLED`. Pagination uses the same
+defaults and clamping as customer history.
+
+```text
+{{baseUrl}}/api/admin/orders/{{orderId}}
+```
+
+Expected **200** with the full customer order fields plus `userId` and
+`userEmail`. No password, password hash or token fields are included.
+
+### Admin status change — PATCH
+
+```text
+{{baseUrl}}/api/admin/orders/{{orderId}}/status
+```
+
+```json
+{"status":"CONFIRMED"}
+```
+
+Use a NEW order: **200**, full admin detail response with `status:"CONFIRMED"`.
+Repeat unchanged: **409**, `Order already has status CONFIRMED`. Customer
+cancellation now returns **409**. PATCH `{"status":"NEW"}` is allowed;
+PATCH `{"status":"COMPLETED"}` or `{"status":"CANCELLED"}` is also allowed
+from NEW or CONFIRMED. These last two statuses are final. Changing a completed
+order to CONFIRMED returns **409**, `Cannot change status of a COMPLETED order`;
+changing a cancelled order returns **409**,
+`Cannot change status of a CANCELLED order`. Setting the current status always
+returns `Order already has status X`, including final statuses.
+
+### Validation, ownership and authorization failures
+
+Use the valid checkout body above, changing one field at a time. Every checkout
+validation failure is **400**, `Validation failed`, with a `fieldErrors` entry:
+
+| Change | Field and message |
+| --- | --- |
+| Missing/null/blank address | `deliveryAddress`: `Delivery address is required` |
+| Trimmed address longer than 500 | `deliveryAddress`: `Delivery address must be at most 500 characters long` |
+| Missing/null/blank phone, letters, misplaced `+`, or cleaned number outside 10–15 digits | `contactPhone`: `Invalid phone number` |
+| Trimmed comment longer than 1000 | `comment`: `Comment must be at most 1000 characters long` |
+
+Example invalid phone response:
+
+```json
+{
+  "timestamp":"2026-10-24T12:00:00Z","status":400,"message":"Validation failed","path":"/api/orders",
+  "fieldErrors":[{"field":"contactPhone","message":"Invalid phone number"}]
+}
+```
+
+Multiple violated constraints can produce multiple errors. The shared error
+format applies to every failure below; `fieldErrors` is omitted for nonvalidation
+errors. A business error example:
+
+```json
+{"timestamp":"2026-10-24T12:00:00Z","status":409,"message":"Cart is empty","path":"/api/orders"}
+```
+
+| Method and copyable URL | Body / setup | Expected |
+| --- | --- | --- |
+| GET `{{baseUrl}}/api/orders/{{missingId}}` | Customer token | 404, `Order not found` |
+| POST `{{baseUrl}}/api/orders/{{missingId}}/cancel` | No body | 404, `Order not found` |
+| GET `{{baseUrl}}/api/orders/{{orderId}}` | Use `otherUserToken` for the original customer's order | 404, `Order not found` |
+| POST `{{baseUrl}}/api/orders/{{orderId}}/cancel` | Use `otherUserToken`, no body | 404, `Order not found` |
+| GET `{{baseUrl}}/api/admin/orders/{{missingId}}` | Admin token | 404, `Order not found` |
+| PATCH `{{baseUrl}}/api/admin/orders/{{missingId}}/status` | `{"status":"CONFIRMED"}` | 404, `Order not found` |
+| GET `{{baseUrl}}/api/admin/orders?status=INVALID` | Admin token | 400, `Validation failed`, field `status`: `Invalid parameter value` |
+| GET `{{baseUrl}}/api/orders?page=abc` | Customer token | 400, `Validation failed`, field `page`: `Invalid parameter value` |
+| GET `{{baseUrl}}/api/orders/not-a-number` | Customer token | 400, `Validation failed`, field `id`: `Invalid parameter value` |
+| PATCH `{{baseUrl}}/api/admin/orders/{{orderId}}/status` | `{}` or `{"status":null}` | 400, `Validation failed`, field `status`: `Status is required` |
+| PATCH `{{baseUrl}}/api/admin/orders/{{orderId}}/status` | `{"status":"INVALID"}` or `{"status":"new"}` | 400, `Malformed request body` |
+| POST `{{baseUrl}}/api/orders` | Raw malformed JSON `{"deliveryAddress":` | 400, `Malformed request body` |
+
+For all seven endpoints (checkout, customer list/detail/cancel, admin
+list/detail/status), remove Authorization, then try `Bearer not-a-jwt`:
+both return **401**, `Authentication required`. Use valid bodies and JSON
+Content-Type for checkout/status so these checks isolate authentication.
+For all three admin endpoints, use `userToken`: **403**, `Access denied`.
+The existing security rules also let admins use the customer endpoints for
+their own carts/orders. Customers cannot supply a different user ID.
