@@ -16,3 +16,15 @@ spring:
       fail-on-unknown-properties: false
     default-property-inclusion: non_null
 
+egastro:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:local-development-placeholder-secret-change-me-at-least-32-bytes}
+      ttl: PT24H
+    cors:
+      allowed-origins:
+        - http://localhost:3000
+        - http://localhost:5173
+  admin:
+    email: ${ADMIN_EMAIL:admin@egastro.local}
+    password: ${ADMIN_PASSWORD:Admin12345}

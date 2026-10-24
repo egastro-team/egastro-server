@@ -25,6 +25,21 @@ The application uses UTC as its JVM default and Hibernate JDBC timezone.
 Swagger UI is available at `http://localhost:8080/swagger-ui.html` and the OpenAPI
 document at `http://localhost:8080/v3/api-docs`.
 
+Authentication endpoints: `POST /api/auth/register` creates a customer (201, no
+token), `POST /api/auth/login` returns a bearer token, and `GET /api/auth/me`
+returns the current user with `Authorization: Bearer <token>`.
+
+JWT settings are `egastro.security.jwt.secret` (`JWT_SECRET`, a local placeholder
+by default) and `egastro.security.jwt.ttl` (default `PT24H`). CORS origins are in
+`egastro.security.cors.allowed-origins` (localhost ports 3000 and 5173 by default).
+The initial admin is configured by `egastro.admin.email` / `egastro.admin.password`
+(`ADMIN_EMAIL` / `ADMIN_PASSWORD`, defaults `admin@egastro.local` / `Admin12345`).
+Startup creates this admin only when the email does not already exist.
+
+Emails are trimmed and stored lowercase. Passwords are preserved exactly;
+registration requires 8–72 characters and a digit. BCrypt also limits UTF-8
+passwords to 72 bytes, so multi-byte passwords may reach that limit sooner.
+
 ## T01 — Project bootstrap and core infrastructure
 
 ````markdown
