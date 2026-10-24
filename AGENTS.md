@@ -20,22 +20,34 @@ Roles: `USER` (customer) and `ADMIN` (manages products, categories and orders).
 - Schema is created by Hibernate: `spring.jpa.hibernate.ddl-auto=update`. **No Flyway/Liquibase.**
 - Not part of this project (do not add them): migrations tooling, soft deletes/archive flags, rate limiting, circuit breakers (Resilience4j), Actuator/Micrometer/Prometheus metrics, correlation-ID/MDC logging filters, login lockout, token revocation/refresh tokens, password reset, reports, exports, e-mail sending.
 
-## 3. Package layout
+## 3. Package layout (standard layered structure)
 
-Base package `com.egastro`, feature-based. Within a feature use sub-packages only if the feature grows (`web` = controllers + DTOs, `service`, `domain` = entities/enums, `repo` = repositories):
+Base package `com.egastro`. Packages are organized **by technical layer**, not by feature. Do not create feature packages (`catalog`, `cart`, …) and do not invent extra top-level packages.
 
 ```
 com.egastro
 ├── EgastroApplication
-├── common          (error model, exception handler, PageResponse, OpenAPI config)
-├── security        (SecurityConfig, JwtService, JwtAuthenticationFilter, CurrentUser)
-├── user            (User, Role, UserRepository, admin bootstrap)
-├── auth            (register / login / me)
-├── catalog         (Category, Product, UnitOfMeasure, public + admin APIs)
-├── cart            (Cart, CartItem, cart API)
-├── order           (Order, OrderItem, OrderStatus, customer + admin APIs)
-└── recommendation  (ML client, fallback, smart-cart endpoint)
+├── config            Spring configuration beans: SecurityConfig, OpenApiConfig, RestClientConfig, AdminBootstrapRunner
+│   └── properties    @ConfigurationProperties records: JwtProperties, CorsProperties, AdminProperties, RecommendationProperties
+├── controller        REST controllers only (thin)
+├── dto
+│   ├── request       request records (with Bean Validation annotations)
+│   └── response      response records (incl. PageResponse<T>)
+├── entity            JPA entities
+├── enums             Role, UnitOfMeasure, OrderStatus, ProductSort
+├── event             Spring application events (ProductDeletedEvent)
+├── exception         ApiException, ErrorResponse, FieldErrorItem, GlobalExceptionHandler
+├── mapper            entity → DTO mappers (UserMapper, ProductMapper, CategoryMapper, CartMapper, OrderMapper)
+├── repository        Spring Data repositories
+├── security          JwtService, JwtAuthenticationFilter, CurrentUser, AuthenticatedUser, RestAuthenticationEntryPoint, RestAccessDeniedHandler
+├── service           business logic: AuthService, CategoryService, ProductService, CartService, OrderService, AdminOrderService, SmartCartService
+│   └── recommendation  RecommendationProvider (interface), MlRecommendationProvider, PopularProductsRecommendationProvider, ScoredRecommendation, RecommendationUnavailableException
+└── util              small static helpers (PageParams)
 ```
+
+Controllers: `AuthController`, `CategoryController`, `ProductController`, `AdminCategoryController`, `AdminProductController`, `CartController`, `RecommendationController`, `OrderController`, `AdminOrderController`. Repositories: `UserRepository`, `CategoryRepository`, `ProductRepository`, `CartRepository`, `CartItemRepository`, `OrderRepository`, `OrderItemRepository`.
+
+Rules: naming uses the layer suffix (`…Controller`, `…Service`, `…Repository`, `…Request`, `…Response`, `…Mapper`, `…Properties`, `…Config`). Dependencies point one way: `controller → service → repository`; controllers never touch repositories or entities directly; services never depend on controllers; entities never depend on DTOs; entity → DTO conversion lives only in `mapper`.
 
 ## 4. Domain model
 
@@ -91,11 +103,11 @@ Everything is authenticated except register, login, `GET /api/categories`, `GET 
 
 ## 7. Design principles (SOLID, applied pragmatically)
 
-- **Single responsibility.** Controllers only map HTTP ↔ DTOs and delegate; services hold business rules and transactions; repositories only access data; mappers/DTO conversion are static methods or small mapper classes, not part of entities. A class that grows beyond one clear job (roughly > 200 lines or > 5 collaborators) must be split.
+- **Single responsibility.** Controllers only map HTTP ↔ DTOs and delegate; services hold business rules and transactions; repositories only access data; entity → DTO conversion lives in the `mapper` package, not in entities or controllers. A class that grows beyond one clear job (roughly > 200 lines or > 5 collaborators) must be split.
 - **Open/closed.** Variation points are expressed as types, not `switch`/`if` chains: e.g. product sort options are an enum that carries its own `Sort`; recommendation sources are implementations of one interface. Adding a new option or source must not require editing existing logic.
 - **Liskov.** Every implementation of an interface honors its documented contract (exceptions, nullability, ordering) so callers never need `instanceof` checks.
 - **Interface segregation.** Keep interfaces small and focused (one or two methods); DTOs are specific per use case (do not reuse a request record as a response).
-- **Dependency inversion.** Depend on abstractions only at real seams — currently the recommendation sources (`RecommendationProvider`). Do NOT create an interface for every service or repository (no `FooService` + `FooServiceImpl` pairs); concrete Spring beans injected by constructor are fine elsewhere. Features talk to each other through services or Spring events, never through another feature's repositories or entities' internals.
+- **Dependency inversion.** Depend on abstractions only at real seams — currently the recommendation sources (`RecommendationProvider`). Do NOT create an interface for every service or repository (no `FooService` + `FooServiceImpl` pairs); concrete Spring beans injected by constructor are fine elsewhere. A service calls other domains' services (or publishes Spring events) instead of using their repositories; direct repository use across domains is acceptable only for read-only queries that belong to the calling use case.
 
 ## 8. Rules for working on a task
 

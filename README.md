@@ -1,5 +1,30 @@
 # eGastro Backend — Implementation Prompts (Java / Spring Boot) — Task prompts
 
+## Running locally
+
+Requires Java 21 and Docker Compose. Start PostgreSQL with:
+
+```sh
+docker compose up -d
+```
+
+SQL scripts in `docker/init/` run only when the database data volume is empty.
+To re-seed, run `docker compose down -v` (this deletes the local database), then
+`docker compose up -d` again.
+
+Run the application with:
+
+```sh
+./mvnw spring-boot:run
+```
+
+On Windows PowerShell, use `./mvnw.cmd spring-boot:run`. The database defaults to
+`jdbc:postgresql://localhost:5432/egastro`, with user and password `egastro`.
+Override these with `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD` if needed.
+The application uses UTC as its JVM default and Hibernate JDBC timezone.
+Swagger UI is available at `http://localhost:8080/swagger-ui.html` and the OpenAPI
+document at `http://localhost:8080/v3/api-docs`.
+
 ## T01 — Project bootstrap and core infrastructure
 
 ````markdown
@@ -12,12 +37,12 @@ Prerequisites: none (empty repository). AGENTS.md exists and must be followed.
  
 3. Docker Compose for the local database: `docker-compose.yml` in the project root with a single `postgres:16` service named `db` — database/user/password `egastro`, port `5432:5432`, a named volume for data, and the directory `./docker/init` mounted read-only to `/docker-entrypoint-initdb.d`. Create `docker/init/` (with a `.gitkeep`); later tasks put their SQL scripts there. Add a short `README.md` section: `docker compose up -d` starts the database; init scripts run only when the data volume is empty (re-seed with `docker compose down -v`); run the app with `./mvnw spring-boot:run`.
  
-4. Package `com.egastro.common`:
-   - `FieldErrorItem(String field, String message)` and `ErrorResponse(Instant timestamp, int status, String message, String path, List<FieldErrorItem> fieldErrors)` records (`fieldErrors` omitted from JSON when null/empty), with a static factory and a helper that writes an `ErrorResponse` as JSON to an `HttpServletResponse` (the security handlers in the next task use it).
-   - `ApiException extends RuntimeException` (Lombok `@Getter`): `HttpStatus status`, `List<FieldErrorItem> fieldErrors`; static factories `notFound(String)`, `conflict(String)`, `badRequest(String)`, `validation(String field, String message)`.
-   - `GlobalExceptionHandler` (`@RestControllerAdvice`): `ApiException` → its status/message/fieldErrors; `MethodArgumentNotValidException` and `ConstraintViolationException` → 400 `"Validation failed"` with one field error per violation (sorted by field); `HttpMessageNotReadableException` → 400 `"Malformed request body"`; `MethodArgumentTypeMismatchException` / `MissingServletRequestParameterException` → 400 `"Validation failed"` with the parameter name as the field; `NoResourceFoundException` → 404 `"Resource not found"`; `HttpRequestMethodNotSupportedException` → 405; `DataIntegrityViolationException` → 409 `"Data conflict"`; any other `Exception` → log with stack trace, 500 `"Unexpected error"`. Spring Security exceptions (`AccessDeniedException`, `AuthenticationException`) must NOT be swallowed — rethrow them so Spring Security handles them.
-   - `PageResponse<T>` record `(List<T> content, int page, int size, long totalElements, int totalPages)` with static `from(Page<T>)`; plus a tiny helper `PageParams.of(int page, int size, Sort sort)` returning a `Pageable` (negative page → 0, size clamped to 1–100).
-   - `OpenApiConfig`: springdoc `OpenAPI` bean with title "eGastro API", version "1.0" and a global HTTP bearer JWT security scheme named `bearerAuth`.
+4. Create the packages from AGENTS.md section 3 that this task needs and put the classes in them:
+   - package `exception`: `FieldErrorItem(String field, String message)` and `ErrorResponse(Instant timestamp, int status, String message, String path, List<FieldErrorItem> fieldErrors)` records (`fieldErrors` omitted from JSON when null/empty), with a static factory and a helper that writes an `ErrorResponse` as JSON to an `HttpServletResponse` (the security handlers in the next task use it).
+   - package `exception`: `ApiException extends RuntimeException` (Lombok `@Getter`): `HttpStatus status`, `List<FieldErrorItem> fieldErrors`; static factories `notFound(String)`, `conflict(String)`, `badRequest(String)`, `validation(String field, String message)`.
+   - package `exception`: `GlobalExceptionHandler` (`@RestControllerAdvice`): `ApiException` → its status/message/fieldErrors; `MethodArgumentNotValidException` and `ConstraintViolationException` → 400 `"Validation failed"` with one field error per violation (sorted by field); `HttpMessageNotReadableException` → 400 `"Malformed request body"`; `MethodArgumentTypeMismatchException` / `MissingServletRequestParameterException` → 400 `"Validation failed"` with the parameter name as the field; `NoResourceFoundException` → 404 `"Resource not found"`; `HttpRequestMethodNotSupportedException` → 405; `DataIntegrityViolationException` → 409 `"Data conflict"`; any other `Exception` → log with stack trace, 500 `"Unexpected error"`. Spring Security exceptions (`AccessDeniedException`, `AuthenticationException`) must NOT be swallowed — rethrow them so Spring Security handles them.
+   - package `dto.response`: `PageResponse<T>` record `(List<T> content, int page, int size, long totalElements, int totalPages)` with static `from(Page<T>)`. Package `util`: a tiny final helper `PageParams.of(int page, int size, Sort sort)` returning a `Pageable` (negative page → 0, size clamped to 1–100).
+   - package `config`: `OpenApiConfig`: springdoc `OpenAPI` bean with title "eGastro API", version "1.0" and a global HTTP bearer JWT security scheme named `bearerAuth`.
  
 5. The application must start against the empty local database (`docker compose up -d`).
  
@@ -32,19 +57,19 @@ Prerequisites: T01 completed (ApiException, ErrorResponse + JSON writer helper, 
  
 1. Dependencies: `spring-boot-starter-security`, `io.jsonwebtoken:jjwt-api` + runtime `jjwt-impl` and `jjwt-jackson` (0.12.x). Do not add the OAuth2 resource server.
  
-2. Config `egastro.security.jwt.secret` (env `JWT_SECRET`, local default: a long placeholder string of at least 32 bytes) and `egastro.security.jwt.ttl` (`Duration`, default `PT24H`), and `egastro.security.cors.allowed-origins` (list, default `http://localhost:3000,http://localhost:5173`), bound with `@ConfigurationProperties` records.
+2. Config `egastro.security.jwt.secret` (env `JWT_SECRET`, local default: a long placeholder string of at least 32 bytes) and `egastro.security.jwt.ttl` (`Duration`, default `PT24H`), and `egastro.security.cors.allowed-origins` (list, default `http://localhost:3000,http://localhost:5173`), bound with `@ConfigurationProperties` records in package `config.properties` (`JwtProperties`, `CorsProperties`, `AdminProperties`).
  
-3. Package `com.egastro.user`: `Role` enum `USER, ADMIN`; `User` entity (table `users`: `id`, `email` unique, `password_hash`, `role`; Lombok per AGENTS.md, `@ToString` must exclude `passwordHash`); `UserRepository` with `Optional<User> findByEmailIgnoreCase(String)` and `boolean existsByEmailIgnoreCase(String)`.
-   - `AdminBootstrapRunner` (`ApplicationRunner`): properties `egastro.admin.email` / `egastro.admin.password` (env `ADMIN_EMAIL`, `ADMIN_PASSWORD`; defaults `admin@egastro.local` / `Admin12345`). If no user with that email exists, create it with role `ADMIN` and a BCrypt hash; if it exists do nothing. Never log the password.
+3. Users: `Role` enum `USER, ADMIN` in package `enums`; `User` entity in package `entity` (table `users`: `id`, `email` unique, `password_hash`, `role`; Lombok per AGENTS.md, `@ToString` must exclude `passwordHash`); `UserRepository` in package `repository` with `Optional<User> findByEmailIgnoreCase(String)` and `boolean existsByEmailIgnoreCase(String)`.
+   - `AdminBootstrapRunner` in package `config` (`ApplicationRunner`): properties `egastro.admin.email` / `egastro.admin.password` (env `ADMIN_EMAIL`, `ADMIN_PASSWORD`; defaults `admin@egastro.local` / `Admin12345`). If no user with that email exists, create it with role `ADMIN` and a BCrypt hash; if it exists do nothing. Never log the password.
  
-4. Package `com.egastro.security`:
-   - `PasswordEncoder` bean (`BCryptPasswordEncoder`).
+4. Security — classes in package `security` unless noted:
+   - `PasswordEncoder` bean (`BCryptPasswordEncoder`), declared in `config.SecurityConfig`.
    - `JwtService` using jjwt: `String generateToken(User user)` — HS256 with `Keys.hmacShaKeyFor(secret bytes)`, `subject` = user id, claims `email` and `role`, `issuedAt`, `expiration` = now + ttl; `Optional<AuthenticatedUser> parse(String token)` returning empty on any invalid/expired/malformed token (never throws). `AuthenticatedUser(Long id, String email, Role role)` record.
    - `JwtAuthenticationFilter extends OncePerRequestFilter`: reads `Authorization: Bearer <token>`; if the token parses, puts a `UsernamePasswordAuthenticationToken` (principal = `AuthenticatedUser`, authority `ROLE_<role>`) into the `SecurityContext`; otherwise continues the chain without authentication.
    - `CurrentUser` helper: `static Long id()` (throws `ApiException` 401 `"Authentication required"` if absent), `static AuthenticatedUser get()`.
-   - `SecurityConfig` (`SecurityFilterChain`): CSRF disabled; stateless sessions; CORS from the config (methods GET, POST, PUT, PATCH, DELETE, OPTIONS; headers Authorization, Content-Type; no credentials); the JWT filter added before `UsernamePasswordAuthenticationFilter`; rules in this order: permitAll for `OPTIONS /**`, `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/categories`, `GET /api/products`, `GET /api/products/*`, `/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html`; `/api/admin/**` → `hasRole("ADMIN")`; every other request authenticated. Custom `AuthenticationEntryPoint` (401, message `Authentication required`) and `AccessDeniedHandler` (403, message `Access denied`) writing the standard `ErrorResponse` JSON.
+   - `SecurityConfig` in package `config` (`SecurityFilterChain`): CSRF disabled; stateless sessions; CORS from the config (methods GET, POST, PUT, PATCH, DELETE, OPTIONS; headers Authorization, Content-Type; no credentials); the JWT filter added before `UsernamePasswordAuthenticationFilter`; rules in this order: permitAll for `OPTIONS /**`, `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/categories`, `GET /api/products`, `GET /api/products/*`, `/v3/api-docs/**`, `/swagger-ui/**`, `/swagger-ui.html`; `/api/admin/**` → `hasRole("ADMIN")`; every other request authenticated. Custom `RestAuthenticationEntryPoint` (401, message `Authentication required`) and `RestAccessDeniedHandler` (403, message `Access denied`) in package `security`, writing the standard `ErrorResponse` JSON.
  
-5. Package `com.egastro.auth` (controller `/api/auth`):
+5. Auth API — `AuthController` (package `controller`, base path `/api/auth`, thin) delegating to `AuthService` (package `service`: `register`, `login`, `me`); request records `RegisterRequest`, `LoginRequest` in `dto.request`; response records `UserResponse`, `LoginResponse` in `dto.response`; `UserMapper` in package `mapper`:
    - `POST /register` body `RegisterRequest(String email, String password)`. `email`: required, trimmed, max 254, valid format ("Invalid email format"; required → "Email is required"). `password`: required, 8–72 characters ("Password must be at least 8 characters long" / "Password must be at most 72 characters long"), at least one digit ("Password must contain at least one digit"); one field error per violated rule, all on `password`. Normalize email (trim + lower-case), role always `USER` (ignore any `role` in the payload). Duplicate email (check `existsByEmailIgnoreCase`, also translate a unique-constraint violation) → 409 with message exactly `A user with this email already exists`. Success → 201 with `UserResponse(Long id, String email, String role)`; no token, no password/hash in any response.
    - `POST /login` body `LoginRequest(String email, String password)` (both required, blank → 400). Unknown email or wrong password → 401 with the same message exactly `Incorrect email or password`. Success → 200 `LoginResponse(String accessToken, String tokenType = "Bearer", long expiresIn /* seconds */, UserResponse user)`. No lockout or attempt counting.
    - `GET /me` (authenticated) → 200 `UserResponse` of the current user (404 `"User not found"` if missing).
@@ -59,7 +84,7 @@ Out of scope: logout endpoint (client discards the token), refresh tokens, passw
 Task T03 — Catalog (categories + products), public browsing, admin CRUD, SQL seed script.
 Prerequisites: T01, T02 completed (error model, PageResponse/PageParams, security rules already permit the public GET endpoints and require ADMIN for `/api/admin/**`; Docker Compose mounts `./docker/init` into the database container).
  
-Package `com.egastro.catalog`.
+Classes go into the layer packages from AGENTS.md section 3: `entity` (`Category`, `Product`), `enums` (`UnitOfMeasure`, `ProductSort`), `repository` (`CategoryRepository`, `ProductRepository`), `dto.request` (`CategoryRequest`, `ProductRequest`), `dto.response` (`CategoryResponse`, `ProductResponse`), `mapper` (`CategoryMapper`, `ProductMapper`), `service` (`CategoryService`, `ProductService`), `controller` (`CategoryController` and `ProductController` for the public endpoints, `AdminCategoryController` and `AdminProductController` for the admin endpoints), `event` (`ProductDeletedEvent`).
  
 **Entities and repositories** (explicit snake_case table/column names; Lombok per AGENTS.md; no archived/soft-delete flags anywhere)
 - `UnitOfMeasure` enum: `PIECE, KG, G, L, ML, PACK`.
@@ -67,7 +92,7 @@ Package `com.egastro.catalog`.
 - `Product` (`products`): `id`, `name` varchar(255), `description` text, `category` (`@ManyToOne(fetch = LAZY)`, column `category_id`, required), `price` numeric(12,2), `unit_of_measure` varchar(20) (`EnumType.STRING`), `image_url` varchar(1000), `available` boolean.
 - `CategoryRepository` (`existsByNameIgnoreCase`, `existsByNameIgnoreCaseAndIdNot`), `ProductRepository` (`existsByCategoryId`, plus what the queries below need).
  
-**DTOs** (records): `CategoryResponse(Long id, String name)`; `ProductResponse(Long id, String name, String description, BigDecimal price, UnitOfMeasure unitOfMeasure, String imageUrl, boolean available, Long categoryId, String categoryName)` — one DTO used for list, details and admin responses (this DTO is reused by later tasks, with a static mapper from `Product`); `CategoryRequest(String name)`; `ProductRequest`.
+**DTOs** (records): `CategoryResponse(Long id, String name)`; `ProductResponse(Long id, String name, String description, BigDecimal price, UnitOfMeasure unitOfMeasure, String imageUrl, boolean available, Long categoryId, String categoryName)` — one DTO used for list, details and admin responses (this DTO is reused by later tasks, converted by `ProductMapper.toResponse(Product)`); `CategoryRequest(String name)`; `ProductRequest`.
  
 **Public endpoints**
 - `GET /api/categories` → array of `CategoryResponse` sorted by name (case-insensitive), then id.
@@ -98,7 +123,7 @@ Add `@Tag`/`@Operation(summary)` annotations. Out of scope: price filters, image
 Task T04 — Server-side shopping cart.
 Prerequisites: T01–T03 completed (User, Product (fields `available`, `price`, `unitOfMeasure`, `imageUrl`), ProductRepository, `ProductDeletedEvent(Long productId)` published by `ProductService.delete` before a product is deleted, `CurrentUser.id()`, error model). All cart endpoints require authentication.
  
-Package `com.egastro.cart`.
+Classes go into the layer packages from AGENTS.md section 3: `entity` (`Cart`, `CartItem`), `repository` (`CartRepository`, `CartItemRepository`), `dto.request` (`AddCartItemRequest`, `UpdateCartItemRequest`), `dto.response` (`CartResponse`, `CartItemResponse`), `mapper` (`CartMapper`), `service` (`CartService`), `controller` (`CartController`).
  
 **Entities** (explicit snake_case names, Lombok per AGENTS.md): `Cart` (`carts`: `id`, `user` OneToOne unique, column `user_id`); `CartItem` (`cart_items`: `id`, `cart` ManyToOne, `product` ManyToOne, `quantity` int; unique constraint on `(cart_id, product_id)`). Repositories with the methods you need (find cart by user id, find item by cart and product id, `deleteByProductId`).
  
@@ -112,7 +137,7 @@ Package `com.egastro.cart`.
 - `PUT /api/cart/items/{productId}` body `{ "quantity": int }` (1–99) sets the quantity; item not in the cart → 404 `Item not found in cart`.
 - `DELETE /api/cart/items/{productId}` removes the item (not being in the cart is not an error).
  
-**Product deletion hook**: add a listener for `ProductDeletedEvent` (`@EventListener`, same transaction) that deletes all `cart_items` of that product, so hard-deleting a product never fails because of carts.
+**Product deletion hook**: add a method in `CartService` annotated `@EventListener` for `ProductDeletedEvent` (package `event`; same transaction) that deletes all `cart_items` of that product, so hard-deleting a product never fails because of carts.
  
 **For later tasks** expose in `CartService`: a method returning the user's cart items as `(Product, quantity)` pairs without creating a cart, and a method that deletes all items of a user's cart.
  
@@ -123,12 +148,12 @@ Add `@Tag`/`@Operation(summary)` annotations. Out of scope: guest carts, stock c
 
 ````markdown
 Task T05 — Orders: checkout from the cart, customer order history, admin management.
-Prerequisites: T01–T04 completed (CartService: read the user's cart items as `(Product, quantity)` pairs and delete all items of a user's cart; Product; User; `CurrentUser.id()`; PageResponse/PageParams; error model). No online payment exists.
+Prerequisites: T01–T04 completed (CartService: read the user's cart items as `(Product, quantity)` pairs and delete all items of a user's cart; Product; User; `CurrentUser.id()`; PageResponse and `util.PageParams`; error model). No online payment exists.
  
-Package `com.egastro.order`.
+Classes go into the layer packages from AGENTS.md section 3: `enums` (`OrderStatus`), `entity` (`Order`, `OrderItem`), `repository` (`OrderRepository`, `OrderItemRepository` — the latter is used by the next task for a popularity query, create it here with the methods this task needs), `dto.request` (`CreateOrderRequest`, `UpdateOrderStatusRequest`), `dto.response` (`OrderResponse`, `OrderItemResponse`, `OrderSummaryResponse`, `AdminOrderResponse`, `AdminOrderSummaryResponse`), `mapper` (`OrderMapper`), `service` (`OrderService` for checkout and the customer's own orders, `AdminOrderService` for the admin operations), `controller` (`OrderController`, `AdminOrderController`).
  
 **Entities** (explicit snake_case names, Lombok per AGENTS.md)
-- `OrderStatus` enum: `NEW, CONFIRMED, COMPLETED, CANCELLED`.
+- `OrderStatus` enum (package `enums`): `NEW, CONFIRMED, COMPLETED, CANCELLED`.
 - `Order` (table `orders`; the class name `Order` is a reserved word — always map to `orders`): `id`, `user` (ManyToOne lazy, `user_id`), `status`, `total_amount` numeric(12,2), `delivery_address` varchar(500), `contact_phone` varchar(20), `comment` varchar(1000) nullable, `created_at` (`Instant`, set on creation with `@CreationTimestamp` or in the service), `items` (`@OneToMany(mappedBy = "order", cascade = ALL, orphanRemoval = true)`).
 - `OrderItem` (`order_items`): `id`, `order` (ManyToOne), `product_id` (plain `Long` column — NO foreign key, so products can be hard-deleted without touching order history), `product_name`, `unit_price` numeric(12,2), `quantity` int.
  
@@ -152,9 +177,9 @@ Add `@Tag`/`@Operation(summary)` annotations. Out of scope: payments, delivery t
 
 ````markdown
 Task T06 — Smart cart: related products for the cart (external service + fallback).
-Prerequisites: T01–T05 completed (CartService returning the user's cart items as `(Product, quantity)` pairs without creating a cart, `ProductResponse` DTO with a static mapper from `Product`, ProductRepository, OrderItem entity/repository with columns `product_id`, `quantity`, `Order.status`, `CurrentUser.id()`, error model).
+Prerequisites: T01–T05 completed (CartService returning the user's cart items as `(Product, quantity)` pairs without creating a cart, `ProductResponse` DTO and `ProductMapper`, ProductRepository, `OrderItem` entity and `OrderItemRepository` (columns `product_id`, `quantity`; `Order.status`), `CurrentUser.id()`, error model).
  
-Package `com.egastro.recommendation`. Keep it simple: no circuit breakers, no metrics, no custom thread pools — just a `RestClient` call wrapped in a plain try/catch.
+Classes go into the layer packages from AGENTS.md section 3: `config.properties` (`RecommendationProperties`), `config` (`RestClientConfig` with a `RestClient` bean for the external service), `service.recommendation` (`RecommendationProvider`, `MlRecommendationProvider`, `PopularProductsRecommendationProvider`, `ScoredRecommendation`, `RecommendationUnavailableException`), `service` (`SmartCartService`), `dto.response` (`CartRecommendationsResponse`, `RecommendedProductResponse`, `RuleMetrics`), `controller` (`RecommendationController` exposing `GET /api/cart/recommendations`); the popularity aggregate query is added to the existing `OrderItemRepository`. Keep it simple: no circuit breakers, no metrics, no custom thread pools — just a `RestClient` call wrapped in a plain try/catch.
  
 **Config** (`@ConfigurationProperties("egastro.recommendations")` record, defaults in `application.yml`): `ml.base-url` (env `ML_SERVICE_URL`, default `http://localhost:8000`; blank = skip the external call), `ml.connect-timeout` (`PT0.5S`), `ml.read-timeout` (`PT2S`), `default-limit` (5), `max-limit` (20).
  
@@ -178,10 +203,10 @@ public interface RecommendationProvider {
     List<ScoredRecommendation> recommend(List<Long> cartProductIds, int limit);
 }
 public record ScoredRecommendation(long productId, Double score, RuleMetrics metrics) {}   // score/metrics null for fallback
-public record RuleMetrics(Double support, Double confidence, Double lift) {}
+// RuleMetrics(Double support, Double confidence, Double lift) is a record in package dto.response (it is also part of the API response)
 public class RecommendationUnavailableException extends RuntimeException {}
 ```
-- `MlRecommendationProvider` (bean name `mlRecommendationProvider`): builds a `RestClient` from the config with a `JdkClientHttpRequestFactory` or `SimpleClientHttpRequestFactory` using the connect/read timeouts. Sends at most 50 distinct cart ids and `max_k = min(limit, 50)`. A plain try/catch around the call converts ANY problem — blank `ml.base-url`, non-2xx status, timeout, connection error, malformed/missing body — into `RecommendationUnavailableException` (log one WARN line with the exception message, never payloads). On success: drop entries with null/non-positive `product_id` or non-finite `score`, drop ids already in the cart, de-duplicate by product id keeping the highest score, sort by score descending then product id ascending, truncate to `limit`.
+- `MlRecommendationProvider` (bean name `mlRecommendationProvider`): uses the `RestClient` bean from `RestClientConfig` (built from the config with a `JdkClientHttpRequestFactory` or `SimpleClientHttpRequestFactory` using the connect/read timeouts); the JSON request/response shapes of the external service are private nested records of this class. Sends at most 50 distinct cart ids and `max_k = min(limit, 50)`. A plain try/catch around the call converts ANY problem — blank `ml.base-url`, non-2xx status, timeout, connection error, malformed/missing body — into `RecommendationUnavailableException` (log one WARN line with the exception message, never payloads). On success: drop entries with null/non-positive `product_id` or non-finite `score`, drop ids already in the cart, de-duplicate by product id keeping the highest score, sort by score descending then product id ascending, truncate to `limit`.
 - `PopularProductsRecommendationProvider` (bean name `popularProductsRecommendationProvider`, the fallback; never throws): most popular available products not in the cart, where popularity = `SUM(quantity)` over `order_items` joined to orders whose status is not `CANCELLED` (one aggregate JPQL/native query with a `Pageable` limit, ordered by the sum descending, then product id ascending, restricted to `products.available = true` and excluding the cart ids). If fewer than `limit` products qualify (e.g. no order history yet), fill the remainder with other available products not in the cart ordered by id descending. Returns `ScoredRecommendation` with null score/metrics.
 - `SmartCartService` depends only on the `RecommendationProvider` interface: a constructor (write it explicitly, with `@Qualifier` on the two parameters) receives a `primary` and a `fallback` provider. It contains no ML, HTTP or popularity logic.
  

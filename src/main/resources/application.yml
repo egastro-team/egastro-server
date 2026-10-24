@@ -1,6 +1,18 @@
 spring:
   application:
-    name: egastro-server
+    name: egastro-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/egastro}
+    username: ${DB_USERNAME:egastro}
+    password: ${DB_PASSWORD:egastro}
+  jpa:
+    hibernate:
+      ddl-auto: update
 
-server:
-  port: 8080
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+    default-property-inclusion: non_null
+
