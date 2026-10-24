@@ -1,7 +1,9 @@
-# eGastro frontend API contract
+# eGastro API contracts
 
 This document describes the implemented backend through T06. Local base URL:
-`http://localhost:8080`. All endpoint paths below are relative to that URL.
+`http://localhost:8080`. Endpoint paths in sections 1–11 are relative to that URL.
+Section 12 defines the separate backend-to-ML-service contract, which uses its
+own base URL and snake_case JSON fields.
 See [RUN.md](RUN.md) for startup and seed instructions and [bruno/](bruno/README.md)
 for runnable requests. The running backend also exposes `/v3/api-docs` and
 `/swagger-ui.html` publicly.
@@ -664,3 +666,165 @@ An unknown protected route without a valid token can return 401 before 404.
 
 There are no logout, refresh-token, password-reset, payment, upload, or customer
 account-management endpoints in this contract.
+
+## 12. External ML recommendation service contract
+
+The backend calls this service to obtain related products for the current cart.
+The frontend continues to call `GET /api/cart/recommendations` (section 7).
+The ML service is a separate application; this repository implements its HTTP
+client, not the ML endpoint. Recommendations describe cart context, not a
+personal taste profile.
+
+### Endpoint and headers
+
+```http
+POST http://localhost:8000/v1/recommendations
+Content-Type: application/json
+```
+
+The general URL is `{ml.base-url}/v1/recommendations`. Trailing slashes on the
+configured base URL are removed before appending the path. There are no path
+or query parameters. The backend sends no Authorization header, JWT, cookies,
+or API key. Successful responses should use `Content-Type: application/json`.
+Unlike the frontend API, external request and response fields use **snake_case**.
+
+### Request body
+
+```json
+{
+  "cart_item_ids": [12, 45, 78],
+  "max_k": 10
+}
+```
+
+| Field | Type | Required | Contract |
+| --- | --- | --- | --- |
+| `cart_item_ids` | Array of integer product IDs | Yes | Distinct catalog product IDs, at most 50; these are product IDs, not cart item row IDs |
+| `max_k` | Integer | Yes | Number of candidate recommendations requested, between 1 and 50 |
+
+The backend preserves the cart's product order when removing duplicates and
+sends the first 50 distinct IDs if there are more. Cart quantities, prices,
+user IDs, and user profiles are not sent. An empty cart bypasses this call.
+
+For the public recommendation endpoint's effective limit `L`, the backend asks
+the primary provider for `min(L * 2, 50)` candidates. The ML provider clamps
+the HTTP `max_k` to 1–50. For example, the default frontend limit of 5 produces
+`max_k: 10`. Extra candidates allow for later catalog filtering. Products in the
+entire cart are excluded from results, including cart IDs beyond the 50 sent.
+
+### Successful response
+
+Return **200** with this JSON body:
+
+```json
+{
+  "recommendations": [
+    {
+      "product_id": 101,
+      "score": 3.42,
+      "metrics": {
+        "support": 0.012,
+        "confidence": 0.41,
+        "lift": 3.42
+      }
+    }
+  ]
+}
+```
+
+| Field | Type | Contract |
+| --- | --- | --- |
+| `recommendations` | Array | Required, non-null; an empty array is a valid result with no recommendations |
+| `recommendations[].product_id` | Integer product ID | Must be positive and fit Java Long to identify a usable product |
+| `recommendations[].score` | Number | Required for a usable entry; must be finite; higher means more relevant; zero and negative finite scores are accepted |
+| `recommendations[].metrics` | Object or null | Optional; may be omitted or null |
+| `metrics.support` | Number or null | Optional rule support |
+| `metrics.confidence` | Number or null | Optional rule confidence |
+| `metrics.lift` | Number or null | Optional rule lift; need not equal score |
+
+Metrics can be partially supplied, for example
+`"metrics": { "confidence": 0.41, "support": null }`. No metrics are required
+to use a recommendation. Return fewer candidates than requested when appropriate;
+use `{ "recommendations": [] }` when there are no matches.
+
+### Backend normalization and catalog filtering
+
+The ML response may be unsorted or contain duplicate, in-cart, or unknown IDs.
+After a successfully decoded response, the ML provider:
+
+1. Drops null entries, null/non-positive product IDs, and null/non-finite scores.
+2. Drops IDs already in the full cart.
+3. Removes duplicate product IDs, keeping the entry with the highest score
+   and that entry's metrics. Equal-score duplicates retain the first entry.
+4. Sorts by score descending, then product ID ascending, and truncates to the
+   provider's requested candidate limit.
+
+`SmartCartService` then loads the candidates in one catalog query, removes
+unknown/deleted and unavailable products, preserves candidate order, and returns
+at most the frontend's effective limit. Catalog names, prices, categories,
+images, and availability come from the backend; the model supplies IDs, scores,
+and optional rule metrics only.
+
+If at least one model candidate survives, the frontend receives `source: "MODEL"`.
+A partial result is not topped up with fallback products. External fields
+`product_id` and `recommendations` are converted to the frontend response's
+`items[].product` representation; they are not forwarded as raw ML JSON.
+
+### Failures and fallback
+
+The expected success status is 200. The current client accepts other 2xx statuses
+only when their body also decodes to the required response shape. Every non-2xx
+status, including redirects, is treated as unavailable; redirects are not followed.
+
+| Condition | Backend behavior |
+| --- | --- |
+| Base URL blank or null | Skip HTTP and treat the provider as unavailable |
+| Connection error, connect/read timeout, or non-2xx status | Treat the provider as unavailable |
+| Malformed/unreadable JSON, incompatible field types, missing body, or absent/null recommendations array | Treat the provider as unavailable |
+| Empty array or no candidates survive filtering | Use fallback |
+| At least one usable candidate survives | Return model results without fallback top-up |
+
+The ML error response body has no required schema: the backend does not expose
+or rely on it. Provider call/decoding problems become
+`RecommendationUnavailableException` and produce one WARN line with a sanitized
+exception message; payloads and cart contents are not logged. There are no
+application-level retries, caching, or circuit breakers.
+
+Fallback selects available products outside the cart by total ordered quantity,
+excluding CANCELLED orders, with product ID ascending for ties. It fills any
+remaining slots with other available products by ID descending. The frontend
+receives **200**, `source: "FALLBACK"`, and items without score/metrics. If fallback
+cannot produce items, the response is `{ "source": "FALLBACK", "items": [] }`.
+An ML failure itself is not propagated as a frontend HTTP error.
+
+### Configuration
+
+All keys below are under `egastro.recommendations` in `application.yml`:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `ml.base-url` | `${ML_SERVICE_URL:http://localhost:8000}` | External service base URL; blank disables HTTP calls |
+| `ml.connect-timeout` | `PT0.5S` | Connection timeout, 500 milliseconds |
+| `ml.read-timeout` | `PT2S` | Read timeout, 2 seconds |
+| `default-limit` | `5` | Frontend recommendation limit when omitted |
+| `max-limit` | `20` | Maximum effective frontend recommendation limit |
+
+Timeouts must be positive. Limits must satisfy
+`1 <= default-limit <= max-limit`. The external `max_k` remains capped at 50
+even if the configured frontend maximum is higher.
+
+### Internal provider interface
+
+Both recommendation strategies implement this Java contract:
+
+```java
+List<ScoredRecommendation> recommend(List<Long> cartProductIds, int limit);
+```
+
+It returns at most `limit` entries, best first, without duplicate or cart IDs.
+Each `ScoredRecommendation` contains `productId`, `score`, and `metrics`.
+The ML implementation supplies scores and optional metrics; the popularity
+implementation supplies null score and metrics. An empty result is valid.
+`RecommendationUnavailableException` indicates that a provider cannot produce
+a result; the fallback implementation catches failures and returns an empty list.
+This Java interface is internal and does not add another HTTP endpoint.
