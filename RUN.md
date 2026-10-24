@@ -1,225 +1,188 @@
-# Run and manually test eGastro
+# Run eGastro and test it with Bruno
 
-This guide covers the implemented T01/T02 application: registration, login,
-current user, JWT security, and API documentation. Catalog, cart, recommendations,
-and order endpoints described in `README.md` belong to later tasks and are not
-implemented yet.
+Implemented through T03: authentication, categories, products, public browsing,
+and admin catalog CRUD. Cart, recommendations, and orders belong to later tasks.
 
-## 1. Prerequisites
+## 1. Start PostgreSQL and the backend
 
-- JDK 21, with `JAVA_HOME` pointing to the JDK directory.
-- Docker Desktop (or Docker Engine with Docker Compose), running.
-- Internet access for the first Maven dependency download and PostgreSQL image pull.
-- Available local ports: `5432` for PostgreSQL and `8080` for the backend.
-- For the request examples below: Windows PowerShell and `curl.exe`.
-
-Run commands from the repository root. Maven is provided by the wrapper; a
-separate Maven installation is unnecessary.
+Requirements: JDK 21, Docker Desktop running, Bruno, and free ports 5432/8080.
+Run from the repository root in PowerShell:
 
 ```powershell
 Set-Location D:\Uni\sem1\egastro-server
-java -version
-docker version
-docker compose version
+docker compose up -d
+docker compose exec postgres pg_isready -U egastro -d egastro
+./mvnw.cmd -q compile
+./mvnw.cmd spring-boot:run '-Dspring-boot.run.arguments=--spring.jpa.hibernate.ddl-auto=update'
 ```
 
-If Java is not on PATH, set your installed JDK location for the current terminal:
+Wait for PostgreSQL to report `accepting connections` before running Maven.
+The backend is ready when the log reports `Started EgastroApplication`.
+Keep that terminal open while testing.
+
+**Use the run command above:** the current `application.yml` uses
+`ddl-auto: create-drop`. The command overrides it to `update`, preserving
+the seed and your data. With `create-drop`, tables are recreated at startup
+and dropped on shutdown.
+
+If Java is not on PATH, set your installed JDK 21 location first:
 
 ```powershell
-$env:JAVA_HOME = 'C:\path\to\jdk-21'
+$env:JAVA_HOME = 'C:\Users\green\.jdks\corretto-21.0.12.1'
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 java -version
 ```
 
-## 2. Start PostgreSQL and the application
+Use your own JDK path if different. On macOS/Linux use `./mvnw` instead
+of `./mvnw.cmd`. Maven comes with the wrapper.
+
+### Catalog seed
+
+Compose mounts `docker/init` into PostgreSQL. On **first initialization**
+PostgreSQL executes `01-catalog-seed.sql`: 6 categories, 48 products,
+including 3 unavailable products. Existing volumes do not rerun the script.
+
+After starting the backend with `update`, check counts in a second terminal:
 
 ```powershell
-docker compose up -d
-docker compose ps
-docker compose exec postgres pg_isready -U egastro -d egastro
+docker compose exec postgres psql -U egastro -d egastro -c "SELECT count(*) FROM categories; SELECT count(*) FROM products;"
 ```
 
-Wait for PostgreSQL to report `accepting connections`. If it does not, inspect:
+If **both catalog tables are empty**, apply the seed once:
 
 ```powershell
-docker compose logs postgres
+Get-Content -Raw docker/init/01-catalog-seed.sql | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U egastro -d egastro
 ```
 
-Compile, then run the backend in this terminal:
+The inserts are not idempotent; do not rerun against a populated catalog.
+No volume deletion is needed.
 
-```powershell
-./mvnw.cmd -q compile
-./mvnw.cmd spring-boot:run
-```
+### Defaults and overrides
 
-On macOS/Linux, use `./mvnw -q compile` and `./mvnw spring-boot:run` instead.
-The backend is ready after the log reports `Started EgastroApplication` and
-Tomcat listening on port `8080`. Hibernate creates or updates the schema.
-Keep this terminal running and use a second PowerShell terminal for requests.
-
-The defaults are:
-
-| Setting | Default | Override |
+| Setting | Default | Environment override |
 | --- | --- | --- |
 | Database URL | `jdbc:postgresql://localhost:5432/egastro` | `DB_URL` |
-| Database username | `egastro` | `DB_USERNAME` |
-| Database password | `egastro` | `DB_PASSWORD` |
-| JWT secret | Local placeholder of at least 32 bytes | `JWT_SECRET` |
-| JWT lifetime | `PT24H` (86,400 seconds) | `egastro.security.jwt.ttl` in `application.yml` |
-| CORS origins | `http://localhost:3000`, `http://localhost:5173` | `egastro.security.cors.allowed-origins` in `application.yml` |
-| Initial admin email | `admin@egastro.local` | `ADMIN_EMAIL` |
-| Initial admin password | `Admin12345` | `ADMIN_PASSWORD` |
+| Database username/password | `egastro` / `egastro` | `DB_USERNAME` / `DB_PASSWORD` |
+| Admin email | `admin@egastro.local` | `ADMIN_EMAIL` |
+| Admin password | `Admin12345` | `ADMIN_PASSWORD` |
+| JWT secret | Local development placeholder | `JWT_SECRET` |
 
-Set environment overrides in the terminal that starts the backend, before
-running Maven. For example:
+Set overrides before starting Maven. Admin bootstrap only creates a missing
+account; changing `ADMIN_PASSWORD` does not reset an existing password.
+JWTs last 24 hours by default. Changing the signing secret invalidates old tokens.
 
-```powershell
-$env:JWT_SECRET = 'replace-with-your-own-local-secret-at-least-32-bytes'
-```
+## 2. Bruno setup
 
-Changing the JWT secret invalidates previously issued tokens. Admin bootstrap
-creates an `ADMIN` only if its email does not already exist. Restarting, or
-changing `ADMIN_PASSWORD`, does not reset an existing user's password or role.
-Database environment overrides affect the backend connection; the Compose
-database itself uses the credentials in `docker-compose.yml`.
+Create a collection and select a local environment with these variables:
 
-## 3. Request setup and response conventions
-
-In the second PowerShell terminal:
-
-```powershell
-$base = 'http://localhost:8080'
-$email = 'customer@example.com'
-$password = 'Customer123'
-```
-
-Run the examples in order. Use a new email if you have already registered this
-account. The examples use `curl.exe` explicitly because Windows PowerShell can
-map `curl` to a different command. JSON is piped into curl to avoid native
-command-line quote escaping issues. `-i` includes HTTP status and headers.
-
-IDs, timestamps, and tokens in the response examples are illustrative. An admin
-is normally inserted first, so a newly registered customer need not have ID 1.
-All API errors use this shape:
-
-```json
-{
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 401,
-  "message": "Authentication required",
-  "path": "/api/auth/me"
-}
-```
-
-Validation failures also contain `fieldErrors`. Other errors omit that field.
-
-## 4. POST /api/auth/register
-
-### Success: 201 Created
-
-```powershell
-@{ email = "  $($email.ToUpperInvariant())  "; password = $password; role = 'ADMIN' } |
-    ConvertTo-Json -Compress |
-    curl.exe -i "$base/api/auth/register" -H 'Content-Type: application/json' --data-binary '@-'
-```
-
-```json
-{
-  "id": 2,
-  "email": "customer@example.com",
-  "role": "USER"
-}
-```
-
-Email is trimmed and stored lowercase. The supplied `role` is ignored: every
-registration creates a `USER`. The response contains no token or password/hash.
-Passwords are preserved exactly, including any spaces.
-
-### Duplicate email: 409 Conflict
-
-Run the same registration again, including with different email capitalization:
-
-```powershell
-@{ email = $email; password = $password } |
-    ConvertTo-Json -Compress |
-    curl.exe -i "$base/api/auth/register" -H 'Content-Type: application/json' --data-binary '@-'
-```
-
-```json
-{
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 409,
-  "message": "A user with this email already exists",
-  "path": "/api/auth/register"
-}
-```
-
-### Invalid fields: 400 Bad Request
-
-```powershell
-'{"email":"not-an-email","password":"short"}' |
-    curl.exe -i "$base/api/auth/register" -H 'Content-Type: application/json' --data-binary '@-'
-```
-
-```json
-{
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 400,
-  "message": "Validation failed",
-  "path": "/api/auth/register",
-  "fieldErrors": [
-    { "field": "email", "message": "Invalid email format" },
-    { "field": "password", "message": "Password must be at least 8 characters long" },
-    { "field": "password", "message": "Password must contain at least one digit" }
-  ]
-}
-```
-
-Use these bodies in the same command to check other validation rules:
-
-| Input | Expected field error(s), with HTTP 400 |
+| Variable | Value |
 | --- | --- |
-| `{"email":"","password":"Customer123"}` | `email`: `Email is required` |
-| `{"email":"new@example.com"}` | `password`: `Password is required` |
-| `{"email":"new@example.com","password":"abcdefgh"}` | `password`: `Password must contain at least one digit` |
-| `{"email":"new@example.com","password":"abc1"}` | `password`: `Password must be at least 8 characters long` |
-| Email longer than 254 characters | `email`: `Email must be at most 254 characters long`; an email format error may also apply |
-| Password longer than 72 characters | `password`: `Password must be at most 72 characters long`; other violated rules also appear |
+| `baseUrl` | `http://localhost:8080` |
+| `adminToken` | Fill from admin login's `accessToken` |
+| `userToken` | Fill from customer login's `accessToken` |
+| `categoryId` | Fill from category creation's `id` |
+| `productId` | Fill from product creation's `id` |
+| `missingId` | `999999999` (must be unused) |
 
-Each violated rule produces its own field error. BCrypt additionally limits
-passwords to 72 UTF-8 bytes, so some multi-byte passwords hit the limit before
-72 characters; these receive the same maximum-length error.
+For each request:
 
-### Malformed JSON: 400 Bad Request
+1. Select the stated HTTP method and paste the URL block into the URL field.
+2. For a body, select **JSON**, paste the JSON block, and use
+   `Content-Type: application/json`.
+3. Set request authentication explicitly:
+   **None** for public requests; **Bearer Token** with `{{adminToken}}` for
+   admin requests; **Bearer Token** with `{{userToken}}` for customer requests.
+   The token field takes only the token, without a `Bearer ` prefix.
 
-```powershell
-'{"email":' |
-    curl.exe -i "$base/api/auth/register" -H 'Content-Type: application/json' --data-binary '@-'
+### Headers in Bruno
+
+You can use Bruno's **Auth → Bearer Token** setting to generate the
+`Authorization` header, or enter it manually in **Headers**. Choose one method
+so the request contains a single Authorization header. When using the Auth tab,
+enter `{{adminToken}}` or `{{userToken}}` without the `Bearer ` prefix.
+When entering the header manually, include the prefix exactly as shown below.
+
+| Request | Required headers |
+| --- | --- |
+| Register or login with a JSON body | `Content-Type: application/json` |
+| Public catalog GET or API docs GET | None |
+| GET `/api/auth/me` | `Authorization: Bearer {{userToken}}` (or admin token) |
+| Admin POST or PUT with a JSON body | `Authorization: Bearer {{adminToken}}` and `Content-Type: application/json` |
+| Admin DELETE | `Authorization: Bearer {{adminToken}}` |
+
+For example, an admin product POST/PUT uses:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+Bruno's JSON body mode normally sets Content-Type automatically; check it in the
+Headers tab. GET and DELETE examples have no body, so they need no Content-Type.
+No cookies or API key are required. `Accept: application/json` is optional.
+For public requests and missing-token checks, select Auth: None and remove any
+manually added Authorization header.
+
+Numeric ID variables are unquoted in JSON. Response IDs and timestamps below are
+illustrative. Run sections 3–6 in order, then failures in section 7,
+then cleanup in section 8. Use a new email/name if an earlier run was not cleaned up.
+
+## 3. Authentication
+
+### Register — POST, Auth: None
+
+Required headers:
+
+```http
+Content-Type: application/json
+```
+
+```text
+{{baseUrl}}/api/auth/register
 ```
 
 ```json
 {
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 400,
-  "message": "Malformed request body",
-  "path": "/api/auth/register"
+  "email": "bruno.customer@example.com",
+  "password": "Customer123"
 }
 ```
 
-## 5. POST /api/auth/login
+Expected: **201**, with `id`, `email`, `role: "USER"`; no token or password.
+Email is trimmed and stored lowercase. Password spaces are preserved.
+Supplying a role does not grant ADMIN.
 
-### Success: 200 OK
+| Change to the body | Expected |
+| --- | --- |
+| Repeat registration, including different email capitalization | 409, `A user with this email already exists` |
+| Email `not-an-email` | 400, field `email`: `Invalid email format` |
+| Omit/blank email | 400, field `email`: `Email is required` |
+| Omit password | 400, field `password`: `Password is required` |
+| Password `abcdefgh` | 400, field `password`: `Password must contain at least one digit` |
+| Password `abc1` | 400, field `password`: `Password must be at least 8 characters long` |
+| Password over 72 characters or 72 UTF-8 bytes | 400, password maximum-length error |
+| Email over 254 characters | 400, email maximum-length error; format error may also apply |
 
-Capture the login response and token for the following requests:
+### Customer login — POST, Auth: None
 
-```powershell
-$loginBody = @{ email = $email; password = $password } | ConvertTo-Json -Compress
-$login = $loginBody |
-    curl.exe -sS "$base/api/auth/login" -H 'Content-Type: application/json' --data-binary '@-' |
-    ConvertFrom-Json
-$token = $login.accessToken
-$login | ConvertTo-Json -Depth 4
+Required headers:
+
+```http
+Content-Type: application/json
 ```
+
+```text
+{{baseUrl}}/api/auth/login
+```
+
+```json
+{
+  "email": "bruno.customer@example.com",
+  "password": "Customer123"
+}
+```
+
+Expected: **200**:
 
 ```json
 {
@@ -228,224 +191,645 @@ $login | ConvertTo-Json -Depth 4
   "expiresIn": 86400,
   "user": {
     "id": 2,
-    "email": "customer@example.com",
+    "email": "bruno.customer@example.com",
     "role": "USER"
   }
 }
 ```
 
-`expiresIn` is in seconds and follows the configured JWT lifetime. Email lookup
-ignores capitalization and trims surrounding spaces.
+Copy `accessToken` into `userToken`.
 
-### Wrong password or unknown email: 401 Unauthorized
+Wrong password or unknown email → **401**, `Incorrect email or password`.
+Missing/blank fields → **400**, `Validation failed`, with field errors.
 
-```powershell
-@{ email = $email; password = 'Wrong12345' } |
-    ConvertTo-Json -Compress |
-    curl.exe -i "$base/api/auth/login" -H 'Content-Type: application/json' --data-binary '@-'
+### Admin login — POST, Auth: None
 
-'{"email":"unknown@example.invalid","password":"Customer123"}' |
-    curl.exe -i "$base/api/auth/login" -H 'Content-Type: application/json' --data-binary '@-'
+Required headers:
+
+```http
+Content-Type: application/json
 ```
 
-Both return:
+```text
+{{baseUrl}}/api/auth/login
+```
 
 ```json
 {
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 401,
-  "message": "Incorrect email or password",
-  "path": "/api/auth/login"
+  "email": "admin@egastro.local",
+  "password": "Admin12345"
 }
 ```
 
-### Missing or blank fields: 400 Bad Request
+Expected: **200**, same login shape, with `user.role: "ADMIN"`.
+Copy `accessToken` into `adminToken`. Use your configured credentials if changed.
 
-```powershell
-'{"email":" ","password":" "}' |
-    curl.exe -i "$base/api/auth/login" -H 'Content-Type: application/json' --data-binary '@-'
+### Current user — GET, Auth: customer or admin
+
+Required header for a customer:
+
+```http
+Authorization: Bearer {{userToken}}
 ```
+
+For an admin, use `Authorization: Bearer {{adminToken}}` instead.
+No `Content-Type` header is needed for this GET request.
+
+```text
+{{baseUrl}}/api/auth/me
+```
+
+Expected: **200**, with the matching user's `id`, `email`, and `role`.
+With Auth: None, token `not-a-jwt`, a tampered token, or an expired token:
+**401**, `Authentication required`.
+
+There is no logout endpoint: discard the client token.
+
+## 4. Public catalog — Auth: None
+
+### Categories — GET
+
+Headers: none required.
+
+```text
+{{baseUrl}}/api/categories
+```
+
+Expected: **200**, an array of `{"id":1,"name":"Dairy"}` objects,
+sorted by name ignoring case, then ID. Fresh seed has 6 categories.
+Use actual returned IDs rather than assuming IDs start at 1.
+
+### Products — GET
+
+Headers: none required. This also applies to all filter, sort, and pagination examples below.
+
+```text
+{{baseUrl}}/api/products
+```
+
+Expected: **200**, with a page of ProductResponse objects:
+
+```json
+{
+  "content": [
+    {
+      "id": 36,
+      "name": "Apple Juice",
+      "description": "Clear apple juice, 1 litre.",
+      "price": 1.89,
+      "unitOfMeasure": "L",
+      "imageUrl": "https://placehold.co/400x300?text=Apple%20Juice",
+      "available": true,
+      "categoryId": 5,
+      "categoryName": "Beverages"
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 48,
+  "totalPages": 3
+}
+```
+
+The example abbreviates `content` to one item; the default first page has
+20 items. Unavailable products remain in results.
+
+Copy each URL into the GET request:
+
+```text
+{{baseUrl}}/api/products?q=MILK&sort=name_asc&page=0&size=5
+```
+
+Expected: **200**, case-insensitive matches including Whole Milk and Milk Chocolate.
+
+```text
+{{baseUrl}}/api/products?sort=name_desc&page=0&size=10
+```
+
+```text
+{{baseUrl}}/api/products?sort=price_asc&page=0&size=10
+```
+
+```text
+{{baseUrl}}/api/products?sort=price_desc&page=1&size=10
+```
+
+Expected: **200**, requested ordering. Pages are zero-based, and every sort
+uses ID ascending for ties. Omitted sort defaults to `name_asc`.
+
+```text
+{{baseUrl}}/api/products?page=-1&size=101&q=%20%20
+```
+
+Expected: **200**, `page: 0`, `size: 100`; blank search is ignored.
+`size=0` becomes 1. Pages beyond the final page have empty `content`.
+
+Category filtering and product details below use IDs created in the admin flow.
+
+## 5. Admin categories — Auth: admin
+
+### Create — POST
+
+Required headers:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+```text
+{{baseUrl}}/api/admin/categories
+```
+
+```json
+{
+  "name": "  Bruno Test Category  "
+}
+```
+
+Expected: **201**, `Location: /api/admin/categories/<id>`, and:
+
+```json
+{
+  "id": 7,
+  "name": "Bruno Test Category"
+}
+```
+
+Copy `id` into `categoryId`. Surrounding spaces are removed.
+Public category listing immediately includes the new category.
+
+### Browse an empty category — GET, Auth: None
+
+Headers: none required.
+
+```text
+{{baseUrl}}/api/products?category={{categoryId}}
+```
+
+Expected: **200**, `content: []`, `totalElements: 0`, `totalPages: 0`.
+
+### Rename — PUT, Auth: admin
+
+Required headers:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+```text
+{{baseUrl}}/api/admin/categories/{{categoryId}}
+```
+
+```json
+{
+  "name": "Bruno Renamed Category"
+}
+```
+
+Expected: **200**, same ID with the updated name.
+Repeating this PUT with its own current name succeeds.
+Public category listing immediately reflects the change.
+
+## 6. Admin products — Auth: admin
+
+### Create — POST
+
+Required headers:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+```text
+{{baseUrl}}/api/admin/products
+```
+
+```json
+{
+  "name": "  Bruno Sample Milk  ",
+  "description": "  Whole milk for the Bruno catalog check.  ",
+  "categoryId": {{categoryId}},
+  "price": 2.49,
+  "unitOfMeasure": "L",
+  "imageUrl": "https://placehold.co/400x300?text=Bruno%20Sample%20Milk"
+}
+```
+
+Expected: **201**, `Location: /api/products/<id>`, and ProductResponse with
+trimmed strings, `available: true`, and
+`categoryName: "Bruno Renamed Category"`. Copy `id` into `productId`.
+
+Description/image URL are optional. Blank image URL becomes absent.
+Omitted/null `available` defaults to `true`.
+Units are uppercase: `PIECE`, `KG`, `G`, `L`, `ML`, `PACK`.
+
+### Details — GET, Auth: None
+
+Headers: none required.
+
+```text
+{{baseUrl}}/api/products/{{productId}}
+```
+
+Expected: **200**, same ProductResponse as creation.
+Use public endpoints for reads; there is no separate admin GET endpoint.
+
+### Filter by category and name — GET, Auth: None
+
+Headers: none required.
+
+```text
+{{baseUrl}}/api/products?category={{categoryId}}&q=milk&sort=price_asc
+```
+
+Expected: **200**, one matching product and `totalElements: 1`.
+
+### Full replacement — PUT, Auth: admin
+
+Required headers:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+```text
+{{baseUrl}}/api/admin/products/{{productId}}
+```
+
+```json
+{
+  "name": "Bruno %_\\ Sample",
+  "description": "Updated product for literal search checks.",
+  "categoryId": {{categoryId}},
+  "price": 3.75,
+  "unitOfMeasure": "PACK",
+  "available": false
+}
+```
+
+Expected: **200**, same ID with updated fields and `available: false`.
+The JSON `\\` represents one literal backslash in the name.
+The omitted previous image URL is cleared and omitted from the response.
+
+PUT requires all required fields again. Omitting `available` on a later PUT
+sets it to `true`. Repeat public details and category browsing without the
+old `q=milk` filter to see the replacement immediately.
+
+### Literal search — GET, Auth: None
+
+Headers: none required.
+
+Run after replacement. Each URL returns **200**, matching the temporary product;
+percent/underscore/backslash are literal characters, not SQL wildcards.
+
+```text
+{{baseUrl}}/api/products?category={{categoryId}}&q=%25
+```
+
+```text
+{{baseUrl}}/api/products?category={{categoryId}}&q=_
+```
+
+```text
+{{baseUrl}}/api/products?category={{categoryId}}&q=%5C
+```
+
+Paste these encoded URLs as written. If using Bruno's query editor instead,
+enter the raw percent/backslash once and let it encode the value.
+
+## 7. Failure paths — run before cleanup
+
+Use Auth: admin for admin requests unless testing authorization.
+
+### Public browsing failures — GET, Auth: None
+
+Headers: none required.
+
+| Copyable URL | Expected |
+| --- | --- |
+| `{{baseUrl}}/api/products?category={{missingId}}` | 404, `Category not found` |
+| `{{baseUrl}}/api/products/{{missingId}}` | 404, `Product not found` |
+| `{{baseUrl}}/api/products/not-a-number` | 400, field `id`: `Invalid parameter value` |
+| `{{baseUrl}}/api/products?category=abc` | 400, field `category`: `Invalid parameter value` |
+| `{{baseUrl}}/api/products?page=abc` | 400, field `page`: `Invalid parameter value` |
+| `{{baseUrl}}/api/products?size=abc` | 400, field `size`: `Invalid parameter value` |
+| `{{baseUrl}}/api/products?sort=unknown` | 400, field `sort`: `Invalid product sort value` |
+| `{{baseUrl}}/api/products?sort=NAME_ASC` | 400, same sort error; request values are lowercase |
+| `{{baseUrl}}/api/products?sort=` | 400, same sort error; omit sort for its default |
+
+This URL contains 101 search characters:
+
+```text
+{{baseUrl}}/api/products?q=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Expected: **400**, field `q`: `Search must be at most 100 characters long`.
+Length is checked after trimming.
+
+### Category failures
+
+For POST and PUT, use:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+For DELETE, use only `Authorization: Bearer {{adminToken}}`; send no body.
+
+POST, Auth: admin:
+
+```text
+{{baseUrl}}/api/admin/categories
+```
+
+```json
+{
+  "name": "  bruno renamed category  "
+}
+```
+
+Expected: **409**, `A category with this name already exists`.
+Uniqueness ignores capitalization and surrounding spaces.
+
+PUT `{{baseUrl}}/api/admin/categories/{{categoryId}}` with
+`{"name":"Dairy"}` conflicts with the seed category: same **409**.
+The current category name remains unchanged.
+
+For POST or PUT, use these bodies:
+
+| Body/change | Expected |
+| --- | --- |
+| `{}` | 400, field `name`: `Name is required` |
+| `{"name":"   "}` | 400, field `name`: `Name is required` |
+| Name longer than 100 characters | 400, field `name`: `Name must be at most 100 characters long` |
+
+DELETE, Auth: admin, while the product still references the category:
+
+```text
+{{baseUrl}}/api/admin/categories/{{categoryId}}
+```
+
+Expected: **409**, `Category contains products and cannot be deleted`.
+Both the category and product remain.
+
+### Product validation failures — POST or PUT, Auth: admin
+
+Required headers:
+
+```http
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+```
+
+Use the following baseline, then change **one field at a time** using the table.
+Restore the baseline between checks. Invalid requests save nothing.
+
+POST URL:
+
+```text
+{{baseUrl}}/api/admin/products
+```
+
+PUT URL:
+
+```text
+{{baseUrl}}/api/admin/products/{{productId}}
+```
+
+```json
+{
+  "name": "Validation Sample",
+  "description": "Validation check.",
+  "categoryId": {{categoryId}},
+  "price": 2.49,
+  "unitOfMeasure": "L",
+  "imageUrl": "https://placehold.co/400x300?text=Validation",
+  "available": true
+}
+```
+
+Do not submit the unchanged valid baseline unless you intend to create/update a
+product. The table describes invalid variants.
+
+| Change | Expected: HTTP 400 |
+| --- | --- |
+| Omit/null/blank `name` | `name`: `Name is required` |
+| Name over 255 characters | `name`: `Name must be at most 255 characters long` |
+| Description over 5000 characters | `description`: `Description must be at most 5000 characters long` |
+| Omit/null `categoryId` | `categoryId`: `Category is required` |
+| `"categoryId": {{missingId}}` | `categoryId`: `Category does not exist` |
+| Omit/null `price` | `price`: `Price is required` |
+| Price `0` or `-1` | `price`: `Price must be greater than 0` |
+| Price `1.234` | `price`: `Price must have at most 10 integer digits and 2 decimals` |
+| Price `10000000000` | `price`: maximum-value and digit-limit errors |
+| Omit/null `unitOfMeasure` | `unitOfMeasure`: `Unit of measure is required` |
+| Unit `"INVALID"` or `"kg"` | `Malformed request body`, no `fieldErrors` |
+| Image URL `"ftp://example.com/image.png"` | `imageUrl`: `Image URL must be an absolute HTTP or HTTPS URL` |
+| Image URL `"relative/image.png"` or `"https:///missing-host"` | Same `imageUrl` error |
+| Image URL over 1000 characters | `imageUrl`: maximum-length error; format error may also apply |
+
+Complete invalid-category example:
+
+```json
+{
+  "name": "Validation Sample",
+  "categoryId": {{missingId}},
+  "price": 2.49,
+  "unitOfMeasure": "L"
+}
+```
+
+Expected: **400**:
 
 ```json
 {
   "timestamp": "2026-10-24T12:00:00Z",
   "status": 400,
   "message": "Validation failed",
-  "path": "/api/auth/login",
+  "path": "/api/admin/products",
   "fieldErrors": [
-    { "field": "email", "message": "Email is required" },
-    { "field": "password", "message": "Password is required" }
+    {
+      "field": "categoryId",
+      "message": "Category does not exist"
+    }
   ]
 }
 ```
 
-Malformed JSON also returns 400 `Malformed request body`, with the login path.
+Send raw malformed JSON such as `{"name":` to either admin POST endpoint:
+**400**, `Malformed request body`, without `fieldErrors`.
+Use valid admin authentication so security does not reject it first.
 
-## 6. GET /api/auth/me
+### Unknown admin resources — Auth: admin
 
-### Success: 200 OK
+Every request below requires `Authorization: Bearer {{adminToken}}`.
+PUT also requires `Content-Type: application/json`; DELETE has no body and
+needs no `Content-Type` header.
 
-Use the token captured by the successful customer login:
+| Method | Copyable URL | Body | Expected |
+| --- | --- | --- | --- |
+| PUT | `{{baseUrl}}/api/admin/products/{{missingId}}` | Valid product baseline | 404, `Product not found` |
+| DELETE | `{{baseUrl}}/api/admin/products/{{missingId}}` | None | 404, `Product not found` |
+| PUT | `{{baseUrl}}/api/admin/categories/{{missingId}}` | `{"name":"Missing Category"}` | 404, `Category not found` |
+| DELETE | `{{baseUrl}}/api/admin/categories/{{missingId}}` | None | 404, `Category not found` |
 
-```powershell
-curl.exe -i "$base/api/auth/me" -H "Authorization: Bearer $token"
-```
+PUT bodies must be valid: Bean Validation runs before resource lookup.
 
-```json
-{
-  "id": 2,
-  "email": "customer@example.com",
-  "role": "USER"
-}
-```
+### Authorization failures
 
-### Missing, malformed, tampered, or expired token: 401 Unauthorized
+Keep `Content-Type: application/json` on POST/PUT requests. DELETE needs no
+Content-Type. Change only the authentication for these checks:
 
-```powershell
-curl.exe -i "$base/api/auth/me"
-curl.exe -i "$base/api/auth/me" -H 'Authorization: Bearer not-a-jwt'
-curl.exe -i "$base/api/auth/me" -H "Authorization: Bearer x$token"
-```
-
-Each returns:
-
-```json
-{
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 401,
-  "message": "Authentication required",
-  "path": "/api/auth/me"
-}
-```
-
-An expired token returns the same response. To check expiry quickly, stop the
-backend and launch it with a temporary two-second lifetime:
-
-```powershell
-./mvnw.cmd spring-boot:run '-Dspring-boot.run.arguments=--egastro.security.jwt.ttl=PT2S'
-```
-
-In the request terminal, repeat the successful login to obtain a fresh `$token`,
-run `Start-Sleep -Seconds 3`, then call `/me`. Expect 401. Restart normally and
-log in again afterward to restore the default 24-hour flow.
-
-### User removed after token issuance: 404 Not Found
-
-If a token is still valid but its user has been removed directly from the local
-database, `/me` returns:
-
-```json
-{
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 404,
-  "message": "User not found",
-  "path": "/api/auth/me"
-}
-```
-
-There is currently no user-deletion API.
-
-## 7. Admin access and route checks
-
-Log in through the same endpoint using the bootstrap credentials (or your
-configured credentials):
-
-```powershell
-'{"email":"admin@egastro.local","password":"Admin12345"}' |
-    curl.exe -sS "$base/api/auth/login" -H 'Content-Type: application/json' --data-binary '@-' |
-    ConvertFrom-Json |
-    Set-Variable -Name adminLogin
-$adminToken = $adminLogin.accessToken
-curl.exe -i "$base/api/auth/me" -H "Authorization: Bearer $adminToken"
-```
-
-Login returns 200 with `user.role` equal to `ADMIN`; `/me` returns 200 with the
-admin's ID, email, and role. Incorrect admin credentials receive the same 401
-`Incorrect email or password` response as customer login.
-
-With a fresh customer `$token`, check the admin gate:
-
-```powershell
-curl.exe -i "$base/api/admin/orders" -H "Authorization: Bearer $token"
-```
-
-```json
-{
-  "timestamp": "2026-10-24T12:00:00Z",
-  "status": 403,
-  "message": "Access denied",
-  "path": "/api/admin/orders"
-}
-```
-
-The following checks distinguish authorization from endpoint implementation:
-
-| Request | Expected result at T02 |
+| Check | Authorization header |
 | --- | --- |
-| `GET /api/admin/orders`, no token | 401 `Authentication required` |
-| `GET /api/admin/orders`, valid customer token | 403 `Access denied` |
-| `GET /api/admin/orders`, valid admin token | 404 `Resource not found` (controller not implemented yet) |
-| `GET /api/products`, no token | 404 `Resource not found` (public rule exists, controller does not yet) |
-| `GET /api/unknown`, valid token | 404 `Resource not found` |
-| `GET /api/unknown`, no token | 401 `Authentication required` |
+| Anonymous → 401 | Omit the header entirely; select Auth: None |
+| Invalid token → 401 | `Authorization: Bearer not-a-jwt` |
+| Customer role → 403 | `Authorization: Bearer {{userToken}}` |
 
-## 8. API documentation and CORS
 
-Open [Swagger UI](http://localhost:8080/swagger-ui.html) in a browser. It redirects
-to the Swagger UI page. Expand an operation, choose **Try it out**, enter the
-request body, and choose **Execute**. After login, use **Authorize** and paste
-the access token without the `Bearer ` prefix to call `/me`.
+Repeat each row with a valid body for POST/PUT:
 
-Both documentation routes are public:
+| Method | Copyable URL |
+| --- | --- |
+| POST | `{{baseUrl}}/api/admin/categories` |
+| PUT | `{{baseUrl}}/api/admin/categories/{{categoryId}}` |
+| DELETE | `{{baseUrl}}/api/admin/categories/{{categoryId}}` |
+| POST | `{{baseUrl}}/api/admin/products` |
+| PUT | `{{baseUrl}}/api/admin/products/{{productId}}` |
+| DELETE | `{{baseUrl}}/api/admin/products/{{productId}}` |
 
-```powershell
-curl.exe -i "$base/v3/api-docs"
-curl.exe -i -L "$base/swagger-ui.html"
+For **every row**:
+
+- Auth: **None**, or Bearer Token `not-a-jwt` → **401**, `Authentication required`.
+- Bearer Token `{{userToken}}` → **403**, `Access denied`.
+
+Rejected requests leave data unchanged. Restore Auth: admin for cleanup.
+
+## 8. Successful deletes and cleanup — Auth: admin
+
+### Delete the product — DELETE
+
+Required header:
+
+```http
+Authorization: Bearer {{adminToken}}
 ```
 
-Expect 200 JSON containing the OpenAPI document and 200 HTML after following
-the Swagger UI redirect, respectively. These routes do not require a token;
-a malformed bearer token does not block them either.
+Send no request body; no `Content-Type` header is needed.
 
-Check a browser preflight request:
-
-```powershell
-curl.exe -i -X OPTIONS "$base/api/auth/me" -H 'Origin: http://localhost:5173' -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: Authorization,Content-Type'
+```text
+{{baseUrl}}/api/admin/products/{{productId}}
 ```
 
-Expect 200 with `Access-Control-Allow-Origin: http://localhost:5173`, allowed
-methods including GET, POST, PUT, PATCH, DELETE, OPTIONS, and allowed headers
-Authorization and Content-Type. `Access-Control-Allow-Credentials` is absent.
-The localhost origin on port 3000 is also allowed. An unlisted origin's
-preflight receives 403 from the CORS processor (its response is not the API's
-standard JSON error body).
+Expected: **204**, empty body. This is a hard delete.
 
-## 9. Stop and rerun
+Public GET `{{baseUrl}}/api/products/{{productId}}` → **404**,
+`Product not found`. Repeat admin DELETE → the same **404**.
+Public GET `{{baseUrl}}/api/products?category={{categoryId}}` → **200** with
+empty `content`; the category still exists.
 
-Stop the backend with **Ctrl+C** in its terminal. Stop the database with:
+### Delete the now-empty category — DELETE
+
+Required header:
+
+```http
+Authorization: Bearer {{adminToken}}
+```
+
+Send no request body; no `Content-Type` header is needed.
+
+```text
+{{baseUrl}}/api/admin/categories/{{categoryId}}
+```
+
+Expected: **204**, empty body. Public category listing no longer includes it.
+Public GET `{{baseUrl}}/api/products?category={{categoryId}}` → **404**,
+`Category not found`. Repeat category DELETE → the same **404**.
+
+With only the original seed remaining, public GET
+`{{baseUrl}}/api/products?size=100` returns 48 products, 3 unavailable.
+The customer account remains available for future login.
+
+## 9. API docs, error conventions, and route checks
+
+Open [Swagger UI](http://localhost:8080/swagger-ui.html), or use Bruno
+GET, Auth: None. Headers: none required:
+
+```text
+{{baseUrl}}/v3/api-docs
+```
+
+Expected: **200**, OpenAPI JSON containing authentication and catalog endpoints.
+Swagger's Authorize dialog takes the token without the `Bearer ` prefix.
+
+Public GET follow-up checks in the cleanup section also require no headers.
+
+All API errors have `timestamp`, `status`, `message`, and `path`.
+Validation errors add `fieldErrors`; empty field errors are omitted.
+Multiple violated rules can produce multiple entries.
+
+| Request | Expected |
+| --- | --- |
+| GET `{{baseUrl}}/api/unknown`, authenticated | 404, `Resource not found` |
+| GET `{{baseUrl}}/api/unknown`, Auth: None | 401, `Authentication required` |
+| GET `{{baseUrl}}/api/admin/orders`, admin | 404; order controller is not implemented |
+| GET `{{baseUrl}}/api/admin/orders`, customer | 403, `Access denied` |
+| GET `{{baseUrl}}/api/admin/orders`, Auth: None | 401, `Authentication required` |
+
+Bruno is not subject to browser CORS enforcement. For a browser preflight check,
+send OPTIONS, Auth: None, to `{{baseUrl}}/api/auth/me` with these headers:
+
+```text
+Origin: http://localhost:5173
+Access-Control-Request-Method: GET
+Access-Control-Request-Headers: Authorization,Content-Type
+```
+
+Expected: **200**, matching `Access-Control-Allow-Origin`, allowed methods
+including GET/POST/PUT/PATCH/DELETE/OPTIONS, and allowed headers
+Authorization/Content-Type. Credentials are not enabled. Port 3000 is also
+allowed. Unlisted origins receive **403** from the CORS processor, outside
+the standard API JSON error format.
+
+To check expiry, restart with a temporary two-second lifetime:
+
+```powershell
+./mvnw.cmd spring-boot:run '-Dspring-boot.run.arguments=--spring.jpa.hibernate.ddl-auto=update --egastro.security.jwt.ttl=PT2S'
+```
+
+Log in, copy the new token, wait at least 3 seconds, then GET `/api/auth/me`.
+Expect **401**. Restart normally and log in again afterward.
+If a token's user is removed directly from the database, `/me` returns
+**404**, `User not found`; no user-deletion endpoint exists.
+
+## 10. Stop and troubleshoot
+
+Stop the backend with **Ctrl+C**, then:
 
 ```powershell
 docker compose down
 ```
 
-The database volume is retained, so registered accounts still exist when you
-restart. Repeating registration then returns 409; log in with the existing
-account or choose another email. There is no logout endpoint: discard the client
-token to log out.
-
-## 10. Troubleshooting
+The database volume remains. With the documented `update` command, accounts
+and catalog changes persist. Repeated registration returns 409; log in instead.
+Repeat the catalog flow after cleanup, or choose a new category name.
 
 | Symptom | Check |
 | --- | --- |
-| `JAVA_HOME` error or Java not found | Point `JAVA_HOME` to JDK 21 and add its `bin` directory to PATH in the launch terminal. |
-| Docker cannot connect to its engine | Start Docker Desktop and wait for it to become ready. |
-| Database connection refused | Run `docker compose ps`, `docker compose logs postgres`, and the `pg_isready` command above; verify port 5432. |
-| Database authentication fails | Check backend `DB_*` overrides against the existing database credentials. |
-| Port 8080 already in use | Stop the previous backend instance before starting another. |
-| Requests cannot connect | Keep the backend terminal running and wait for startup to finish. |
-| `/me` unexpectedly returns 401 | Log in again, use the captured `accessToken`, and check token lifetime and whether the JWT secret changed. |
-| Admin login fails after changing environment variables | Bootstrap leaves existing users unchanged; use the credentials originally used to create that account. |
-| Registration unexpectedly returns 409 | The email is already stored, including case-insensitive matches. |
-
-The current Compose file does not mount `docker/init` into PostgreSQL, so SQL
-files in that directory are not automatically executed by this setup.
+| Java not found | Set `JAVA_HOME` to JDK 21 and add its `bin` to PATH. |
+| Docker cannot connect | Start Docker Desktop and wait for it to be ready. |
+| Database connection refused | Run `docker compose ps` and `docker compose logs postgres`; check port 5432. |
+| Database authentication fails | Match backend `DB_*` overrides to existing database credentials. |
+| Empty catalog after startup | Use `ddl-auto=update`; check counts and seed instructions above. |
+| Port 8080 in use | Stop the previous backend instance. |
+| Bruno variables unresolved | Select the environment and fill values from responses. |
+| Unexpected 401 | Check request Auth, copy a fresh `accessToken`, and check expiry/signing-secret changes. |
+| Admin request returns 403 | Use a login token whose `user.role` is `ADMIN`. |
+| Admin login fails after env change | Bootstrap does not reset existing credentials. |
+| Category POST returns 409 on rerun | Finish cleanup or choose a new name. |
+| Literal search gives unexpected results | Avoid double encoding: URL uses `%25`/`%5C`; query editor uses raw characters. |
