@@ -474,7 +474,7 @@ calls only this backend endpoint, never the external model service.
         "categoryId": 4,
         "categoryName": "Bakery"
       },
-      "score": 3.42,
+      "score": 0.41,
       "metrics": { "support": 0.012, "confidence": 0.41, "lift": 3.42 }
     }
   ]
@@ -669,162 +669,135 @@ account-management endpoints in this contract.
 
 ## 12. External ML recommendation service contract
 
-The backend calls this service to obtain related products for the current cart.
-The frontend continues to call `GET /api/cart/recommendations` (section 7).
-The ML service is a separate application; this repository implements its HTTP
-client, not the ML endpoint. Recommendations describe cart context, not a
-personal taste profile.
+The shared, authoritative HTTP contract is
+[docs/ml-contract.openapi.yaml](docs/ml-contract.openapi.yaml) (OpenAPI 3.0.3).
+Both teams use that single file for request/response schemas, examples, errors,
+and health checks. It describes the revised target contract; the implementation
+gaps below must be resolved before the backend fully conforms.
 
-### Endpoint and headers
+The ML service is a separate application. The frontend continues to call
+`GET /api/cart/recommendations` (section 7), never ML directly. Recommendations
+use cart context, not a personal taste profile. External JSON uses snake_case.
 
-```http
-POST http://localhost:8000/v1/recommendations
-Content-Type: application/json
-```
+### HTTP integration
 
-The general URL is `{ml.base-url}/v1/recommendations`. Trailing slashes on the
-configured base URL are removed before appending the path. There are no path
-or query parameters. The backend sends no Authorization header, JWT, cookies,
-or API key. Successful responses should use `Content-Type: application/json`.
-Unlike the frontend API, external request and response fields use **snake_case**.
+The local service URL is `http://localhost:8000`, configurable through
+`egastro.recommendations.ml.base-url` / `ML_SERVICE_URL`. Trailing slashes are
+removed before appending `/v1/recommendations`. A blank base URL disables calls.
 
-### Request body
+- `POST /v1/recommendations` requires `Content-Type: application/json` only;
+  no Authorization, JWT, cookies, API key, path parameters, or query parameters.
+- Requests contain distinct product IDs in `cart_item_ids`, preserving cart
+  order and taking the first 50, plus `max_k` between 1 and 50. Quantities,
+  prices, user profiles, and session IDs are not sent. Empty carts bypass ML.
+- For effective frontend limit `L`, request `min(L * 2, 50)` candidates to allow
+  for backend filtering. Exclude the entire cart, including IDs beyond those sent.
+- HTTP 200 requires `model_version` and `recommendations`, even for an empty
+  array. The version is a nonblank string identifying the rules that generated
+  the candidates, intended for attribution in impression logs.
+- `score` is finite confidence in the inclusive range `[0, 1]`, not lift.
+  For example, confidence/score can be `0.41` while lift is `3.42`.
+- ML errors use 422 (invalid input), 503 (model unavailable), or 500 (unexpected
+  failure), with required string fields `error` and `detail`. These are separate
+  from the backend's frontend-facing error format.
+- `GET http://localhost:8000/health` requires no headers or body. Docker and
+  monitoring systems receive 200 with `{"status":"ready"}` only when the model
+  is loaded, otherwise 503 with the shared `{error, detail}` schema. This is an
+  ML-service readiness endpoint, not a new Spring backend endpoint.
 
-```json
-{
-  "cart_item_ids": [12, 45, 78],
-  "max_k": 10
-}
-```
+Full copyable bodies and success/failure examples are in the OpenAPI file.
 
-| Field | Type | Required | Contract |
-| --- | --- | --- | --- |
-| `cart_item_ids` | Array of integer product IDs | Yes | Distinct catalog product IDs, at most 50; these are product IDs, not cart item row IDs |
-| `max_k` | Integer | Yes | Number of candidate recommendations requested, between 1 and 50 |
+### Backend normalization and business filters
 
-The backend preserves the cart's product order when removing duplicates and
-sends the first 50 distinct IDs if there are more. Cart quantities, prices,
-user IDs, and user profiles are not sent. An empty cart bypasses this call.
+The ML service supplies candidate IDs, scores, optional metrics, and model
+version. It excludes cart IDs and duplicates and sorts by descending score.
+The backend defensively normalizes results: reject invalid IDs and scores,
+exclude cart IDs, and deduplicate by highest score (first entry wins ties).
+Sort by score descending, then product ID ascending, and retain at most the
+requested candidate limit.
 
-For the public recommendation endpoint's effective limit `L`, the backend asks
-the primary provider for `min(L * 2, 50)` candidates. The ML provider clamps
-the HTTP `max_k` to 1–50. For example, the default frontend limit of 5 produces
-`max_k: 10`. Extra candidates allow for later catalog filtering. Products in the
-entire cart are excluded from results, including cart IDs beyond the 50 sent.
+The backend loads candidates in one catalog query and excludes unknown/deleted
+and unavailable products. Only the backend has the current catalog, so it also
+owns these business filters for **both model and popularity recommendations**:
 
-### Successful response
+- Exclude alcohol and tobacco.
+- Exclude substitutes for products already in the cart.
+- Return no more than two products from any one category.
 
-Return **200** with this JSON body:
+Preserve candidate order while filtering and return at most the effective
+frontend limit. Catalog names, prices, categories, images, and availability come
+from the backend. This contract does not introduce catalog classification fields
+or define substitute detection infrastructure.
 
-```json
-{
-  "recommendations": [
-    {
-      "product_id": 101,
-      "score": 3.42,
-      "metrics": {
-        "support": 0.012,
-        "confidence": 0.41,
-        "lift": 3.42
-      }
-    }
-  ]
-}
-```
+### Control group and fallback
 
-| Field | Type | Contract |
+Assign 10% of sessions to a control group, with assignment stable throughout the
+session. For these sessions the backend bypasses ML and serves popularity results,
+displayed as **Popular**. Session assignment is a backend responsibility; session
+identifiers are not added to the ML request. Use the existing `source: "FALLBACK"`
+response value, without introducing a new frontend source enum.
+
+Outside the control group, connection errors, timeouts, non-2xx responses
+(including redirects, which are not followed), unreadable/missing responses, or
+no usable candidates trigger popularity fallback. A partial usable model result
+is returned as-is with `source: "MODEL"`, without popularity top-up. The current
+client also accepts other 2xx responses if their body decodes successfully.
+
+Popularity ranks available products outside the cart by ordered quantity from
+noncancelled orders, breaking ties by product ID ascending, then fills remaining
+slots with available products by ID descending. Apply the business filters above.
+Return HTTP 200 with `source: "FALLBACK"`; omit score and metrics. If no products
+can be returned, use an empty items array. ML failures are not frontend HTTP errors.
+
+For future impression logging, retain `model_version` for displayed model results;
+use null for control-group and fallback impressions because no ML rules generated
+those displayed results. Impression logging is not currently implemented, and no
+new frontend response field is introduced by this documentation update.
+
+Provider/decoding failures become `RecommendationUnavailableException`, with one
+sanitized WARN message. Do not log response payloads or cart contents or expose
+ML error details to the frontend. There are no retries, caching, or circuit breakers.
+
+### Configuration targets and implementation gaps
+
+Keys remain under `egastro.recommendations` in `application.yml`:
+
+| Key | Revised target/default | Meaning |
 | --- | --- | --- |
-| `recommendations` | Array | Required, non-null; an empty array is a valid result with no recommendations |
-| `recommendations[].product_id` | Integer product ID | Must be positive and fit Java Long to identify a usable product |
-| `recommendations[].score` | Number | Required for a usable entry; must be finite; higher means more relevant; zero and negative finite scores are accepted |
-| `recommendations[].metrics` | Object or null | Optional; may be omitted or null |
-| `metrics.support` | Number or null | Optional rule support |
-| `metrics.confidence` | Number or null | Optional rule confidence |
-| `metrics.lift` | Number or null | Optional rule lift; need not equal score |
+| `ml.base-url` | `${ML_SERVICE_URL:http://localhost:8000}` | ML base URL; blank disables HTTP |
+| `ml.connect-timeout` | `PT0.2S` | Connection timeout, 200 milliseconds |
+| `ml.read-timeout` | `PT0.3S` | Read timeout, 300 milliseconds |
+| `default-limit` | `5` | Frontend limit when omitted |
+| `max-limit` | `20` | Maximum effective frontend limit |
 
-Metrics can be partially supplied, for example
-`"metrics": { "confidence": 0.41, "support": null }`. No metrics are required
-to use a recommendation. Return fewer candidates than requested when appropriate;
-use `{ "recommendations": [] }` when there are no matches.
+Timeouts must be positive; `1 <= default-limit <= max-limit`. External `max_k`
+remains capped at 50 regardless of the frontend maximum. No new configuration
+keys are introduced.
 
-### Backend normalization and catalog filtering
+**Current backend gaps (not implemented by this documentation change):**
 
-The ML response may be unsorted or contain duplicate, in-cart, or unknown IDs.
-After a successfully decoded response, the ML provider:
-
-1. Drops null entries, null/non-positive product IDs, and null/non-finite scores.
-2. Drops IDs already in the full cart.
-3. Removes duplicate product IDs, keeping the entry with the highest score
-   and that entry's metrics. Equal-score duplicates retain the first entry.
-4. Sorts by score descending, then product ID ascending, and truncates to the
-   provider's requested candidate limit.
-
-`SmartCartService` then loads the candidates in one catalog query, removes
-unknown/deleted and unavailable products, preserves candidate order, and returns
-at most the frontend's effective limit. Catalog names, prices, categories,
-images, and availability come from the backend; the model supplies IDs, scores,
-and optional rule metrics only.
-
-If at least one model candidate survives, the frontend receives `source: "MODEL"`.
-A partial result is not topped up with fallback products. External fields
-`product_id` and `recommendations` are converted to the frontend response's
-`items[].product` representation; they are not forwarded as raw ML JSON.
-
-### Failures and fallback
-
-The expected success status is 200. The current client accepts other 2xx statuses
-only when their body also decodes to the required response shape. Every non-2xx
-status, including redirects, is treated as unavailable; redirects are not followed.
-
-| Condition | Backend behavior |
-| --- | --- |
-| Base URL blank or null | Skip HTTP and treat the provider as unavailable |
-| Connection error, connect/read timeout, or non-2xx status | Treat the provider as unavailable |
-| Malformed/unreadable JSON, incompatible field types, missing body, or absent/null recommendations array | Treat the provider as unavailable |
-| Empty array or no candidates survive filtering | Use fallback |
-| At least one usable candidate survives | Return model results without fallback top-up |
-
-The ML error response body has no required schema: the backend does not expose
-or rely on it. Provider call/decoding problems become
-`RecommendationUnavailableException` and produce one WARN line with a sanitized
-exception message; payloads and cart contents are not logged. There are no
-application-level retries, caching, or circuit breakers.
-
-Fallback selects available products outside the cart by total ordered quantity,
-excluding CANCELLED orders, with product ID ascending for ties. It fills any
-remaining slots with other available products by ID descending. The frontend
-receives **200**, `source: "FALLBACK"`, and items without score/metrics. If fallback
-cannot produce items, the response is `{ "source": "FALLBACK", "items": [] }`.
-An ML failure itself is not propagated as a frontend HTTP error.
-
-### Configuration
-
-All keys below are under `egastro.recommendations` in `application.yml`:
-
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `ml.base-url` | `${ML_SERVICE_URL:http://localhost:8000}` | External service base URL; blank disables HTTP calls |
-| `ml.connect-timeout` | `PT0.5S` | Connection timeout, 500 milliseconds |
-| `ml.read-timeout` | `PT2S` | Read timeout, 2 seconds |
-| `default-limit` | `5` | Frontend recommendation limit when omitted |
-| `max-limit` | `20` | Maximum effective frontend recommendation limit |
-
-Timeouts must be positive. Limits must satisfy
-`1 <= default-limit <= max-limit`. The external `max_k` remains capped at 50
-even if the configured frontend maximum is higher.
+- Runtime defaults remain `PT0.5S` (500 ms) and `PT2S` (2 seconds).
+- The provider accepts any finite score, including negative values and values
+  above 1; the revised confidence bounds are not yet enforced.
+- `model_version` is currently ignored, not propagated through the provider or
+  recorded in impression logs. Missing versions are not yet rejected.
+- Catalog filtering currently handles cart IDs, duplicates, availability, and
+  unknown products; alcohol/tobacco, substitute, and category-cap rules are pending.
+- Session-stable 10% control-group routing is pending.
+- ML error bodies are currently ignored. The structured error and health schemas
+  are requirements for the separate ML application, which is not implemented here.
 
 ### Internal provider interface
 
-Both recommendation strategies implement this Java contract:
+The current internal Java interface remains:
 
 ```java
 List<ScoredRecommendation> recommend(List<Long> cartProductIds, int limit);
 ```
 
 It returns at most `limit` entries, best first, without duplicate or cart IDs.
-Each `ScoredRecommendation` contains `productId`, `score`, and `metrics`.
-The ML implementation supplies scores and optional metrics; the popularity
-implementation supplies null score and metrics. An empty result is valid.
-`RecommendationUnavailableException` indicates that a provider cannot produce
-a result; the fallback implementation catches failures and returns an empty list.
-This Java interface is internal and does not add another HTTP endpoint.
+`ScoredRecommendation` currently contains `productId`, `score`, and `metrics`;
+version propagation needs a later implementation change. Popularity supplies null
+score and metrics. Empty results are valid. `RecommendationUnavailableException`
+indicates provider failure; the popularity provider catches failures and returns
+an empty list. This interface adds no backend HTTP endpoint.

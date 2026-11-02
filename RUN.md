@@ -5,6 +5,19 @@ admin catalog CRUD, server-side shopping carts, checkout, customer order history
 admin order management, and related products for your cart. Run sections
 11, 13, and 14 before section 8's catalog cleanup.
 
+The revised external ML HTTP contract is
+[docs/ml-contract.openapi.yaml](docs/ml-contract.openapi.yaml), with backend
+responsibilities and implementation gaps in [CONTRACT.md, section 12](CONTRACT.md#12-external-ml-recommendation-service-contract).
+Import the OpenAPI file into Bruno for ML-only requests, using
+`http://localhost:8000` (no token required). POST recommendations requires
+`Content-Type: application/json`; GET `/health` requires no headers. Request IDs
+are catalog product IDs from `GET /api/products`, not cart item row IDs. The file
+includes 200, 422, 503, and 500 recommendation examples and 200/503 health examples.
+The ML service runs separately and is not started by this backend's commands.
+The revised contract does not change current backend behavior: runtime timeouts
+remain 500 ms/2 seconds; confidence bounds, model-version propagation, business
+filters, and the session control group are pending implementation.
+
 ## 1. Start PostgreSQL and the backend
 
 Requirements: JDK 21, Docker Desktop running, Bruno, and free ports 5432/8080.
